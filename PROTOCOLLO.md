@@ -1,6 +1,6 @@
 # Protocollo USB — Ball & Beam a blocchi
 
-Collegamento: USB seriale, 115200 baud, 8N1. Una riga = un messaggio JSON (terminato da `\n`). Max 12 KB per riga.
+Collegamento: USB seriale, 115200 baud, 8N1. Una riga = un messaggio JSON (terminato da `\n`). Max 12 KB per riga. Annidamento JSON massimo 40 livelli (circa 18 blocchi uno dentro l'altro): oltre, l'ESP32 risponde `JSON non valido`.
 
 ## Browser → ESP32 (comandi, campo `c`)
 
@@ -18,11 +18,13 @@ Collegamento: USB seriale, 115200 baud, 8N1. Una riga = un messaggio JSON (termi
 
 - Telemetria ogni 50 ms: `{"t":12345,"x":18.4,"sp":20,"a":-3.2,"run":1,"pid":1,"ok":1}`
   `x` = posizione palla in cm dal sensore, `sp` = setpoint cm, `a` = angolo trave in gradi (0 = orizzontale), `ok` = sensore valido.
+  `s` (solo con programma in esecuzione e istruzione con `i`) = indice `i` dell'istruzione che l'interprete sta eseguendo.
 - Eventi (campo `e`): `hello`, `ok`, `err` (campo `m`), `log` (campo `v`, dal blocco "mostra"), `done` (programma terminato).
 
 ## Programma (campo `p`): lista di istruzioni
 
-Ogni istruzione ha `o` (operazione). Un'espressione è un numero oppure un oggetto con `o`.
+Ogni istruzione ha `o` (operazione) e, opzionalmente, `i` (intero: indice dell'istruzione nel programma, scelto dal browser). Un'espressione è un numero oppure un oggetto con `o`.
+L'interprete ignora `i` salvo per riportarlo nella telemetria (`s`), così il browser evidenzia il blocco in esecuzione.
 
 Istruzioni:
 - `{"o":"servo","v":E}` angolo trave (gradi, limitato dal firmware); disattiva il PID
