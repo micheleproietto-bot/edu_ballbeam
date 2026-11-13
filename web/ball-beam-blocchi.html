@@ -69,6 +69,7 @@
   <span id="sensorBadge" class="badge">sensore ?</span>
   <span id="connBadge" class="badge">non connesso</span>
   <button id="btnSim" title="Prova i programmi senza ESP32: palla e trave virtuali">🧪 Simulazione</button>
+  <button id="btnWifi" title="Collegati alla scheda via Wi-Fi">📶 Wi-Fi</button>
   <button id="btnConnect" class="primary">Connetti USB</button>
 </header>
 <main>
@@ -4368,7 +4369,9 @@ const friendly = (m) => FRIENDLY[m] || m;
 // =====================================================================
 const $ = (id) => document.getElementById(id);
 let port = null, writer = null, reader = null, pingTimer = null, connected = false, running = false, sensorOk = false;
-let link = null, readDone = null, closing = false;                       // { write(str) }: USB oppure simulatore
+let link = null, readDone = null, closing = false;
+let wsock = null;                      // WebSocket verso l'ESP32 (Wi-Fi)
+const served = /^https?:$/.test(location.protocol);   // pagina servita dall'ESP32 stesso                       // { write(str) }: USB oppure simulatore
 let sim = null, simTimer = null;
 const enc = new TextEncoder();
 
@@ -4378,12 +4381,13 @@ function logLine(text, cls) {
 }
 function say(text, isErr) { const m = $("msg"); m.textContent = text || ""; m.className = isErr ? "err" : ""; }
 function refreshUi() {
-  $("connBadge").textContent = connected ? (sim ? "simulazione" : "connesso") : "non connesso"; $("connBadge").className = "badge " + (connected ? "ok" : "");
-  $("btnSim").textContent = sim ? "Esci dalla simulazione" : "🧪 Simulazione"; $("btnSim").disabled = connected && !sim; $("btnConnect").disabled = !!sim;
+  $("connBadge").textContent = connected ? (sim ? "simulazione" : wsock ? "Wi-Fi" : "connesso") : "non connesso"; $("connBadge").className = "badge " + (connected ? "ok" : "");
+  $("btnSim").textContent = sim ? "Esci dalla simulazione" : "🧪 Simulazione"; $("btnSim").disabled = connected && !sim; $("btnConnect").disabled = !!sim || !!wsock && !served;
+  $("btnWifi").hidden = served; $("btnWifi").textContent = wsock ? "Disconnetti Wi-Fi" : "📶 Wi-Fi"; $("btnWifi").disabled = !!sim || (connected && !wsock);
   $("simCard").hidden = !sim;
   $("sensorBadge").textContent = connected ? (sensorOk ? "sensore OK" : "palla non vista") : "sensore ?";
   $("sensorBadge").className = "badge " + (connected ? (sensorOk ? "ok" : "bad") : "");
-  $("btnConnect").textContent = connected ? "Disconnetti" : "Connetti USB";
+  $("btnConnect").textContent = connected ? "Disconnetti" : (served ? "Connetti" : "Connetti USB");
   $("btnRun").disabled = !connected || running; $("btnStop").disabled = !connected;
   $("pidRun").disabled = !connected || running; $("pidStop").disabled = !connected;
   $("tryAngle").disabled = !connected || running;
@@ -4400,7 +4404,33 @@ function usbLink() {
 }
 async function send(obj) { if (!link) return; try { await sendRaw(JSON.stringify(obj) + "\n"); } catch (e) { logLine("Non riesco a mandare i dati alla scheda: " + e.message, "err"); } }
 
+function connectWs(host) {
+  return new Promise((resolve) => {
+    const url = (location.protocol === "https:" ? "wss://" : "ws://") + host + ":81/";
+    let w;
+    try { w = new WebSocket(url); } catch (e) { say("Indirizzo non valido: " + host, true); return resolve(); }
+    let opened = false;
+    w.onopen = () => {
+      opened = true; wsock = w; connected = true; sensorOk = false; say("");
+      link = { async write(str) { for (const l of str.split("\n")) if (l && w.readyState === 1) w.send(l); } };
+      pingTimer = setInterval(() => send({ c:"ping" }), 500);
+      logLine("Collegato via Wi-Fi a " + host, "info");
+      refreshUi(); send({ c:"hello" }); resolve();
+    };
+    w.onmessage = (ev) => { const l = String(ev.data).trim(); if (l[0] === "{") handleLine(l); };
+    w.onerror = () => { if (!opened) say("Non riesco a raggiungere la scheda su " + host + ": è accesa e collegata al Wi-Fi? Il computer è sulla stessa rete?", true); };
+    w.onclose = () => {
+      if (!opened) { resolve(); return; }
+      if (wsock === w) {                                      // caduta inattesa
+        clearInterval(pingTimer); wsock = null; link = null; connected = false; running = false; pidOn = false; refreshUi();
+        say("Collegamento con la scheda perso: la trave è tornata orizzontale. Riprovo…", true);
+        if (served) setTimeout(() => { if (!connected) connectWs(host); }, 2000);
+      }
+    };
+  });
+}
 async function connect() {
+  if (served) return connectWs(location.hostname);
   if (!("serial" in navigator)) { say("Questo browser non supporta l'USB. Usa Chrome o Edge.", true); return; }
   try {
     port = await navigator.serial.requestPort();
@@ -4433,6 +4463,10 @@ function connectSim() {
 }
 async function disconnect() {
   clearInterval(pingTimer); pingTimer = null;
+  if (wsock) {
+    try { await send({ c:"stop" }); } catch (e) {}
+    const w = wsock; wsock = null; link = null; connected = false; running = false; pidOn = false; hist.length = 0; refreshUi(); w.close(); return;
+  }
   if (sim) { clearInterval(simTimer); simTimer = null; sim = null; link = null; connected = false; running = false; sensorOk = false; hist.length = 0; refreshUi(); return; }
   try { await send({ c:"stop" }); } catch (e) {}
   closing = true;
@@ -4558,6 +4592,13 @@ async function run() {
   await send({ c:"run" }); logLine("Avvio programma (" + line.length + " byte)", "info");
 }
 $("btnConnect").onclick = () => (connected ? disconnect() : connect());
+$("btnWifi").onclick = () => {
+  if (connected) return disconnect();
+  let host = "192.168.178.200"; try { host = localStorage.getItem("bb_host") || host; } catch (e) {}
+  host = (prompt("Indirizzo della scheda (Wi-Fi):", host) || "").trim(); if (!host) return;
+  try { localStorage.setItem("bb_host", host); } catch (e) {}
+  connectWs(host);
+};
 $("btnSim").onclick = () => (sim ? disconnect() : connectSim());
 $("simBall").oninput = (e) => { if (sim) sim.setBall((e.target.value / 100) * (+$("cLen").value || 70)); };
 $("simGone").onchange = (e) => { if (sim) sim.setBallPresent(!e.target.checked); };
@@ -4642,6 +4683,7 @@ refreshUi();
 
 let m0 = "pid"; try { m0 = localStorage.getItem("bb_mode") || "pid"; } catch (e) {}
 setMode(m0 === "blocks" ? "blocks" : "pid");
+if (served) setTimeout(() => connectWs(location.hostname), 300);   // pagina servita dall'ESP32: si collega da sola
 </script>
 </body>
 </html>
