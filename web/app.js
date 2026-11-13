@@ -22,6 +22,15 @@ Blockly.common.defineBlocksWithJsonArray([
     previousStatement:null, nextStatement:null, colour:H.extra, inputsInline:true,
     tooltip:"Il PID resta attivo finché il programma gira. Alla fine del programma la trave torna orizzontale." },
   { type:"bb_pid_off", message0:"disattiva PID", previousStatement:null, nextStatement:null, colour:H.extra },
+  { type:"bb_if_pos", message0:"se la palla è %1 %2 cm", args0:[
+      { type:"field_dropdown", name:"OP", options:[["prima di","LT"],["oltre","GT"]] }, { type:"input_value", name:"X", check:"Number" } ],
+    message1:"allora %1", args1:[{ type:"input_statement", name:"DO" }], message2:"altrimenti %1", args2:[{ type:"input_statement", name:"ELSE" }],
+    previousStatement:null, nextStatement:null, colour:H.sens,
+    tooltip:"Confronta la posizione della palla (distanza dal sensore) con un valore. Si incastra insieme agli altri blocchi di azione." },
+  { type:"bb_until_pos", message0:"aspetta che la palla sia %1 %2 cm", args0:[
+      { type:"field_dropdown", name:"OP", options:[["prima di","LT"],["oltre","GT"]] }, { type:"input_value", name:"X", check:"Number" } ],
+    previousStatement:null, nextStatement:null, colour:H.sens,
+    tooltip:"Il programma resta fermo finché la palla non arriva prima (o oltre) la distanza indicata." },
   { type:"bb_pos", message0:"posizione palla (cm)", output:"Number", colour:H.sens, tooltip:"Distanza della palla dal sensore." },
   { type:"bb_sp", message0:"obiettivo (cm)", output:"Number", colour:H.sens },
   { type:"bb_angle", message0:"angolo trave (gradi)", output:"Number", colour:H.sens },
@@ -36,7 +45,7 @@ function toolboxFor(level) {
   cats.push({ kind:"category", name:"Azioni", colour:H.act, contents:[
     B("bb_servo",{V:num(0)}), B("bb_wait",{V:num(1)}), B("bb_say",{V:num(0)}) ]});
   cats.push({ kind:"category", name:"Sensori", colour:H.sens, contents:[
-    B("bb_pos"), B("bb_time"), ...(level>=3 ? [B("bb_sp"), B("bb_angle")] : []) ]});
+    B("bb_if_pos",{X:num(20)}), B("bb_until_pos",{X:num(20)}), B("bb_pos"), B("bb_time"), ...(level>=3 ? [B("bb_sp"), B("bb_angle")] : []) ]});
   const ctl = [ B("controls_repeat_ext",{TIMES:num(5)}), B("bb_forever") ];
   if (level>=2) ctl.push(B("controls_whileUntil"), B("bb_until"));
   cats.push({ kind:"category", name:"Cicli", colour:H.ctl, contents:ctl });
@@ -85,22 +94,26 @@ const EXAMPLES = [
   { name:"3 · Leggi il sensore", level:1, note:"Muovi la palla con la mano e guarda i numeri nei Messaggi: è la distanza dal sensore in cm.",
     state: startWith([ { type:"controls_repeat_ext", inputs:{ TIMES:nb(10), DO:{ block: chain([
       { type:"bb_say", inputs:{ V:{ block:{ type:"bb_pos" } } } }, { type:"bb_wait", inputs:{ V:nb(0.5) } } ]) } } } ]) },
-  { name:"4 · Decidi con SE", level:2, note:"Se la palla è prima di 20 cm la spinge avanti, altrimenti indietro. Vedrai che oscilla: serve qualcosa di più furbo.",
+  { name:"4 · Reagisci al sensore", level:1, note:"Se la palla è prima di 25 cm inclina da una parte, altrimenti dall'altra. Oscilla: capirai perché serve il PID.",
+    state: startWith([ { type:"bb_forever", inputs:{ DO:{ block: chain([
+      { type:"bb_if_pos", fields:{ OP:"LT" }, inputs:{ X:nb(25), DO:{ block:{ type:"bb_servo", inputs:{ V:nb(6) } } }, ELSE:{ block:{ type:"bb_servo", inputs:{ V:nb(-6) } } } } },
+      { type:"bb_wait", inputs:{ V:nb(0.05) } } ]) } } } ]) },
+  { name:"5 · Decidi con SE", level:2, note:"Se la palla è prima di 20 cm la spinge avanti, altrimenti indietro. Vedrai che oscilla: serve qualcosa di più furbo.",
     state: startWith([ { type:"bb_forever", inputs:{ DO:{ block: chain([
       { type:"controls_if", extraState:{ hasElse:true }, inputs:{
         IF0:{ block:{ type:"logic_compare", fields:{ OP:"LT" }, inputs:{ A:{ block:{ type:"bb_pos" } }, B:nb(20) } } },
         DO0:{ block:{ type:"bb_servo", inputs:{ V:nb(6) } } }, ELSE:{ block:{ type:"bb_servo", inputs:{ V:nb(-6) } } } } },
       { type:"bb_wait", inputs:{ V:nb(0.05) } } ]) } } } ]) },
-  { name:"5 · Controllo proporzionale a mano", level:2, note:"Più la palla è lontana da 20 cm, più inclini la trave. Ma senza “frenare” la palla oscilla!",
+  { name:"6 · Controllo proporzionale a mano", level:2, note:"Più la palla è lontana da 20 cm, più inclini la trave. Ma senza “frenare” la palla oscilla!",
     state: (() => { const st = startWith([ { type:"bb_forever", inputs:{ DO:{ block: chain([
       { type:"variables_set", fields:{ VAR:{ id:"v_err" } }, inputs:{ VALUE:{ block:{ type:"math_arithmetic", fields:{ OP:"MINUS" }, inputs:{ A:nb(20), B:{ block:{ type:"bb_pos" } } } } } } },
       { type:"bb_servo", inputs:{ V:{ block:{ type:"math_arithmetic", fields:{ OP:"MULTIPLY" }, inputs:{ A:{ block:{ type:"variables_get", fields:{ VAR:{ id:"v_err" } } } }, B:nb(1.5) } } } } },
       { type:"bb_wait", inputs:{ V:nb(0.05) } } ]) } } } ]);
       st.variables = [ { name:"errore", id:"v_err" } ]; return st; })() },
-  { name:"6 · Tieni la palla con il PID", level:3, note:"Il PID fa da solo quello che hai provato a mano, e in più frena la palla (Kd).",
+  { name:"7 · Tieni la palla con il PID", level:3, note:"Il PID fa da solo quello che hai provato a mano, e in più frena la palla (Kd).",
     state: startWith([ { type:"bb_setpoint", inputs:{ V:nb(20) } }, { type:"bb_pid", inputs:{ KP:nb(2), KI:nb(0), KD:nb(1) } },
       { type:"bb_forever", inputs:{ DO:{ block:{ type:"bb_wait", inputs:{ V:nb(0.1) } } } } } ]) },
-  { name:"7 · PID tra due posizioni", level:3, note:"Ogni 6 secondi l'obiettivo cambia: la palla viene portata da 12 a 28 cm e ritorno.",
+  { name:"8 · PID tra due posizioni", level:3, note:"Ogni 6 secondi l'obiettivo cambia: la palla viene portata da 12 a 28 cm e ritorno.",
     state: startWith([ { type:"bb_pid", inputs:{ KP:nb(2), KI:nb(0), KD:nb(1) } },
       { type:"bb_forever", inputs:{ DO:{ block: chain([
         { type:"bb_setpoint", inputs:{ V:nb(12) } }, { type:"bb_wait", inputs:{ V:nb(6) } },
@@ -184,6 +197,12 @@ function stmt(b) {
     case "bb_pid": return tag({ o:"pid", kp:inp("KP"), ki:inp("KI"), kd:inp("KD") });
     case "bb_pid_off": return tag({ o:"pid_off" });
     case "bb_until": return tag({ o:"until", c:inp("C") });
+    case "bb_until_pos": return tag({ o:"until", c:{ o:"cmp", op: b.getFieldValue("OP") === "LT" ? "<" : ">", a:{ o:"pos" }, b:inp("X") } });
+    case "bb_if_pos": {
+      const node = tag({ o:"if", c:{ o:"cmp", op: b.getFieldValue("OP") === "LT" ? "<" : ">", a:{ o:"pos" }, b:inp("X") }, t:body("DO") });
+      const f = body("ELSE"); if (f.length) node.f = f;
+      return node;
+    }
     case "bb_forever": return tag({ o:"forever", b:body("DO") });
     case "controls_repeat_ext": return tag({ o:"repeat", n:inp("TIMES"), b:body("DO") });
     case "controls_whileUntil": {
@@ -283,8 +302,8 @@ async function connect() {
   pingTimer = setInterval(() => send({ c:"ping" }), 500);
 }
 function connectSim() {
-  sim = BBSim.createSim({ length: +$("cLen").value || 40, mountInverted: $("simMount").checked, noise: 0.1, onLine: (l) => handleLine(l) });
-  sim.setBall(($("simBall").value / 100) * (+$("cLen").value || 40));
+  sim = BBSim.createSim({ length: +$("cLen").value || 70, mountInverted: $("simMount").checked, noise: 0.1, onLine: (l) => handleLine(l) });
+  sim.setBall(($("simBall").value / 100) * (+$("cLen").value || 70));
   link = { async write(s) { sim.write(s); } };
   connected = true; sensorOk = false; say("");
   let last = performance.now(), acc = 0;
@@ -350,7 +369,9 @@ function drawChart() {
   const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
   if (cv.width !== w * dpr || cv.height !== h * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
   cx.setTransform(dpr, 0, 0, dpr, 0, 0); cx.clearRect(0, 0, w, h);
-  const len = Math.max(10, +$("cLen").value || 40), lim = Math.max(1, +$("cLimit").value || 20);
+  let len = Math.max(10, +$("cLen").value || 70);
+  for (const p of hist) if (p.ok && p.x > len) len = Math.ceil(p.x / 10) * 10;       // la posizione non viene mai tagliata
+  const lim = Math.max(1, +$("cLimit").value || 20);
   const padL = 34, padR = 6, topH = h * 0.62, gap = 14, botY = topH + gap, botH = h - botY - 4;
   const style = getComputedStyle(document.documentElement);
   const col = (n) => style.getPropertyValue(n).trim();
@@ -406,7 +427,7 @@ async function run() {
 }
 $("btnConnect").onclick = () => (connected ? disconnect() : connect());
 $("btnSim").onclick = () => (sim ? disconnect() : connectSim());
-$("simBall").oninput = (e) => { if (sim) sim.setBall((e.target.value / 100) * (+$("cLen").value || 40)); };
+$("simBall").oninput = (e) => { if (sim) sim.setBall((e.target.value / 100) * (+$("cLen").value || 70)); };
 $("simMount").onchange = (e) => { if (sim) sim.setMountInverted(e.target.checked); };
 $("btnRun").onclick = run;
 $("btnStop").onclick = () => { send({ c:"stop" }); say(""); highlight(null); };
@@ -416,7 +437,7 @@ for (const id of ["cCenter", "cLimit", "cInv"]) $(id).onchange = () => {
   try { localStorage.setItem("bb_cfg", JSON.stringify({ c:$("cCenter").value, l:$("cLimit").value, i:$("cInv").checked, n:$("cLen").value })); } catch (e) {}
   if (connected && !running) send(cfgObj());
 };
-$("cLen").onchange = () => { $("cCenter").onchange(); if (sim) sim.setLength(+$("cLen").value || 40); };
+$("cLen").onchange = () => { $("cCenter").onchange(); if (sim) sim.setLength(+$("cLen").value || 70); };
 try { const s = JSON.parse(localStorage.getItem("bb_cfg") || "null"); if (s) { $("cCenter").value = s.c; $("cLimit").value = s.l; $("cInv").checked = s.i; $("cLen").value = s.n; $("tryAngle").min = -s.l; $("tryAngle").max = s.l; } } catch (e) {}
 
 $("level").onchange = (e) => ws.updateToolbox(toolboxFor(+e.target.value));
