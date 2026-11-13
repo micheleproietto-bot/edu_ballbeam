@@ -12,7 +12,7 @@
 #define PIN_SDA   21
 #define PIN_SCL   22
 #define BAUD      115200
-#define FW_VERSION "1.1"
+#define FW_VERSION "1.2"
 #define CTRL_MS   5           // periodo del ciclo di controllo (ms)
 #define CTRL_DT   (CTRL_MS / 1000.0f)
 #define RANGE_MS  20          // tempo di misura del sensore (ms): a 10 ms il VL53L4CD non dà misure valide a questa distanza
@@ -31,6 +31,7 @@ static volatile float g_angle = 0;      // gradi rispetto all'orizzontale
 static volatile bool  g_pid = false;
 static volatile float g_kp = 2, g_ki = 0, g_kd = 1;
 static volatile bool  g_running = false;
+static volatile bool  g_tune = false;     // modalità PID: parametri regolati dal browser, nessun programma
 static volatile bool  g_stopReq = false;
 static volatile bool  g_startReq = false;
 static volatile uint32_t g_lastPing = 0;
@@ -150,7 +151,13 @@ static void controlTask(void*) {
     if (g_running && !g_stopReq && millis() - g_lastPing > 2000) { sendErr("connessione persa: stop"); g_stopReq = true; }
     if (g_stopReq && !g_running) g_stopReq = false;
 
+    // modalità PID: stesse sicurezze del programma
+    bool tuneFail = false;
+    if (g_tune && !g_posOk) { sendErr("sensore non valido: stop"); tuneFail = true; }
+    else if (g_tune && millis() - g_lastPing > 2000) { sendErr("connessione persa: stop"); tuneFail = true; }
+
     xSemaphoreTake(servoMutex, portMAX_DELAY);
+    if (tuneFail) { g_tune = false; g_pid = false; }
     if (g_pid && g_posOk) {
       float pos = g_pos;
       float err = g_sp - pos;
@@ -170,6 +177,7 @@ static void controlTask(void*) {
     }
     prevPid = g_pid;
     if (g_stopReq) { g_pid = false; writeServo(0); }
+    if (tuneFail) writeServo(0);
     xSemaphoreGive(servoMutex);
 
     vTaskDelayUntil(&last, pdMS_TO_TICKS(CTRL_MS));
@@ -192,7 +200,7 @@ static void handleLine(const char* line) {
   } else if (!strcmp(c, "ping")) {
     // heartbeat: g_lastPing già aggiornato
   } else if (!strcmp(c, "cfg")) {
-    if (g_running) { sendErr("ferma il programma prima"); return; }
+    if (g_running || g_tune) { sendErr("ferma il programma prima"); return; }
     if (d["center"].is<float>()) cfgCenter = clampf(d["center"], 60, 120);
     if (d["limit"].is<float>())  cfgLimit  = clampf(d["limit"], 1, HARD_LIMIT);
     if (!d["inv"].isNull())      cfgInv    = d["inv"].as<int>() != 0;
@@ -204,18 +212,36 @@ static void handleLine(const char* line) {
     g_prog["p"] = d["p"];
     g_progLoaded = !g_prog["p"].isNull();
     if (g_progLoaded) sendEv("ok"); else sendErr("programma vuoto");
+  } else if (!strcmp(c, "tune")) {
+    // {"c":"tune","on":1,"sp":20,"kp":2,"ki":0,"kd":1} — tutti i campi opzionali; il PID resta sull'ESP
+    if (g_running) { sendErr("ferma il programma prima"); return; }
+    bool refuse = false;
+    xSemaphoreTake(servoMutex, portMAX_DELAY);
+    if (d["sp"].is<float>()) g_sp = clampf(d["sp"], 0, 100);
+    if (d["kp"].is<float>()) g_kp = clampf(d["kp"], 0, 50);
+    if (d["ki"].is<float>()) g_ki = clampf(d["ki"], 0, 20);
+    if (d["kd"].is<float>()) g_kd = clampf(d["kd"], 0, 20);
+    if (!d["on"].isNull()) {
+      if (d["on"].as<int>() != 0) {
+        if (!g_posOk) refuse = true;
+        else { g_stopReq = false; g_tune = true; g_pid = true; }
+      } else { g_tune = false; g_pid = false; writeServo(0); }
+    }
+    xSemaphoreGive(servoMutex);
+    if (refuse) sendErr("sensore non valido");
   } else if (!strcmp(c, "run")) {
     if (g_running) { sendErr("già in esecuzione"); return; }
     if (!g_progLoaded) { sendErr("nessun programma"); return; }
     if (!g_posOk) { sendErr("sensore non valido"); return; }
     g_stopReq = false;
+    g_tune = false;
     g_running = true;     // subito, così "prog" e "stop" successivi vedono lo stato corretto
     g_startReq = true;
   } else if (!strcmp(c, "stop")) {
     g_stopReq = true;
-    if (!g_running) { stopAll(); g_stopReq = false; }
+    if (!g_running) { g_tune = false; stopAll(); g_stopReq = false; }
   } else if (!strcmp(c, "angle")) {
-    if (!g_running) setManual(d["v"] | 0.0f);
+    if (!g_running && !g_tune) setManual(d["v"] | 0.0f);
   } else {
     sendErr("comando sconosciuto");
   }
@@ -266,7 +292,7 @@ void loop() {
     t["x"] = serialized(String(g_pos, 1));
     t["sp"] = g_sp;
     t["a"] = serialized(String(g_angle, 1));
-    t["run"] = g_running ? 1 : 0;
+    t["run"] = (g_running || g_tune) ? 1 : 0;
     t["pid"] = g_pid ? 1 : 0;
     t["ok"] = g_posOk ? 1 : 0;
     if (g_running && g_cur >= 0) t["s"] = (int)g_cur;
