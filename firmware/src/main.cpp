@@ -5,6 +5,7 @@
 #include <ESP32Servo.h>
 #include <ArduinoJson.h>
 #include <vl53l4cd_class.h>
+#include <interp.h>
 
 // ---------- Hardware ----------
 #define PIN_SERVO 18
@@ -31,7 +32,6 @@ static volatile bool  g_stopReq = false;
 static volatile bool  g_startReq = false;
 static volatile uint32_t g_lastPing = 0;
 static volatile uint32_t g_lastGood = 0;
-static uint32_t g_t0 = 0;
 
 static Servo servo;
 static VL53L4CD sensor(&Wire, -1);
@@ -41,7 +41,7 @@ static JsonDocument g_prog;
 static bool g_progLoaded = false;
 
 // ---------- Utilità ----------
-static float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+static float clampf(float v, float lo, float hi) { return bb::clampf(v, lo, hi); }
 
 static void sendDoc(const JsonDocument& d) {
   xSemaphoreTake(txMutex, portMAX_DELAY);
@@ -54,6 +54,7 @@ static void sendEv(const char* e)  { JsonDocument d; d["e"] = e; sendDoc(d); }
 
 static void writeServo(float angle) {
   float limit = clampf(cfgLimit, 1, HARD_LIMIT);
+  if (isnan(angle)) angle = 0;
   angle = clampf(angle, -limit, limit);
   g_angle = angle;
   float a = cfgCenter + (cfgInv ? -angle : angle);
@@ -70,106 +71,38 @@ static void setManual(float angle) {
 
 static void stopAll() { setManual(0); }
 
-// ---------- Interprete ----------
-struct Var { char n[16]; float v; };
-static Var vars[24];
-static int nvars = 0;
-
-static float* varRef(const char* n) {
-  for (int i = 0; i < nvars; i++) if (strcmp(vars[i].n, n) == 0) return &vars[i].v;
-  if (nvars >= 24) return nullptr;
-  strncpy(vars[nvars].n, n, 15); vars[nvars].n[15] = 0; vars[nvars].v = 0;
-  return &vars[nvars++].v;
-}
-
-static float evalE(JsonVariantConst e) {
-  if (e.is<float>() || e.is<int>() || e.is<double>()) return e.as<float>();
-  const char* o = e["o"] | "";
-  if (!strcmp(o, "pos"))   return g_pos;
-  if (!strcmp(o, "sp"))    return g_sp;
-  if (!strcmp(o, "angle")) return g_angle;
-  if (!strcmp(o, "time"))  return (millis() - g_t0) / 1000.0f;
-  if (!strcmp(o, "var"))   { float* p = varRef(e["n"] | "x"); return p ? *p : 0; }
-  if (!strcmp(o, "not"))   return evalE(e["a"]) == 0 ? 1 : 0;
-  if (!strcmp(o, "abs"))   return fabsf(evalE(e["a"]));
-  float a = evalE(e["a"]);
-  if (!strcmp(o, "and"))   return (a != 0 && evalE(e["b"]) != 0) ? 1 : 0;
-  if (!strcmp(o, "or"))    return (a != 0 || evalE(e["b"]) != 0) ? 1 : 0;
-  float b = evalE(e["b"]);
-  const char* op = e["op"] | "";
-  if (!strcmp(o, "bin")) {
-    if (!strcmp(op, "+")) return a + b;
-    if (!strcmp(op, "-")) return a - b;
-    if (!strcmp(op, "*")) return a * b;
-    if (!strcmp(op, "/")) return b == 0 ? 0 : a / b;
-    if (!strcmp(op, "min")) return a < b ? a : b;
-    if (!strcmp(op, "max")) return a > b ? a : b;
+// ---------- Interprete (lib/interp/interp.h) ----------
+struct FwHost : bb::Host {
+  uint32_t nowMs() override { return millis(); }
+  void sleepMs(uint32_t ms) override { vTaskDelay(pdMS_TO_TICKS(ms)); }
+  bool halted() override { return g_stopReq; }
+  float pos() override { return g_pos; }
+  float sp() override { return g_sp; }
+  float angle() override { return g_angle; }
+  void servo(float deg) override { setManual(deg); }
+  void setpoint(float cm) override { g_sp = cm; }
+  void pidOn(float kp, float ki, float kd) override {
+    xSemaphoreTake(servoMutex, portMAX_DELAY);
+    g_kp = kp; g_ki = ki; g_kd = kd; g_pid = true;
+    xSemaphoreGive(servoMutex);
   }
-  if (!strcmp(o, "cmp")) {
-    if (!strcmp(op, "<"))  return a < b;
-    if (!strcmp(op, ">"))  return a > b;
-    if (!strcmp(op, "<=")) return a <= b;
-    if (!strcmp(op, ">=")) return a >= b;
-    if (!strcmp(op, "==")) return fabsf(a - b) < 1e-4f;
-    if (!strcmp(op, "!=")) return fabsf(a - b) >= 1e-4f;
+  void pidOff() override {
+    xSemaphoreTake(servoMutex, portMAX_DELAY);
+    g_pid = false;
+    xSemaphoreGive(servoMutex);
   }
-  return 0;
-}
-
-static bool halted() { return g_stopReq; }
-
-static void waitMs(uint32_t ms) {
-  uint32_t t = millis();
-  while (!halted() && millis() - t < ms) vTaskDelay(pdMS_TO_TICKS(5));
-}
-
-static void execBlock(JsonArrayConst b, int depth);
-
-static void execStmt(JsonVariantConst s, int depth) {
-  if (depth > 24) { sendErr("programma troppo annidato"); g_stopReq = true; return; }
-  const char* o = s["o"] | "";
-  if (!strcmp(o, "servo"))        { setManual(evalE(s["v"])); }
-  else if (!strcmp(o, "wait"))    { waitMs((uint32_t)(clampf(evalE(s["v"]), 0, 3600) * 1000)); }
-  else if (!strcmp(o, "setpoint")){ g_sp = clampf(evalE(s["v"]), 0, 100); }
-  else if (!strcmp(o, "pid"))     { g_kp = evalE(s["kp"]); g_ki = evalE(s["ki"]); g_kd = evalE(s["kd"]); g_pid = true; }
-  else if (!strcmp(o, "pid_off")) { g_pid = false; }
-  else if (!strcmp(o, "set"))     { float* p = varRef(s["n"] | "x"); if (p) *p = evalE(s["v"]); }
-  else if (!strcmp(o, "change"))  { float* p = varRef(s["n"] | "x"); if (p) *p += evalE(s["v"]); }
-  else if (!strcmp(o, "say"))     { JsonDocument d; d["e"] = "log"; d["v"] = evalE(s["v"]); sendDoc(d); }
-  else if (!strcmp(o, "if")) {
-    if (evalE(s["c"]) != 0) execBlock(s["t"], depth + 1); else execBlock(s["f"], depth + 1);
-  }
-  else if (!strcmp(o, "repeat")) {
-    int n = (int)evalE(s["n"]);
-    for (int i = 0; i < n && !halted(); i++) { execBlock(s["b"], depth + 1); vTaskDelay(1); }
-  }
-  else if (!strcmp(o, "forever")) {
-    while (!halted()) { execBlock(s["b"], depth + 1); vTaskDelay(1); }
-  }
-  else if (!strcmp(o, "while")) {
-    while (!halted() && evalE(s["c"]) != 0) { execBlock(s["b"], depth + 1); vTaskDelay(1); }
-  }
-  else if (!strcmp(o, "until")) {
-    while (!halted() && evalE(s["c"]) == 0) vTaskDelay(pdMS_TO_TICKS(5));
-  }
-}
-
-static void execBlock(JsonArrayConst b, int depth) {
-  for (JsonVariantConst s : b) {
-    if (halted()) return;
-    execStmt(s, depth);
-    vTaskDelay(1);
-  }
-}
+  void say(float v) override { JsonDocument d; d["e"] = "log"; d["v"] = v; sendDoc(d); }
+  void fail(const char* msg) override { sendErr(msg); g_stopReq = true; }
+};
+static FwHost fwHost;
+static bb::Interp interp(fwHost);
 
 static void programTask(void*) {
   for (;;) {
     if (g_startReq) {
       g_startReq = false;
-      nvars = 0;
-      g_t0 = millis();
       g_lastPing = millis();
-      execBlock(g_prog["p"].as<JsonArrayConst>(), 0);
+      interp.run(g_prog["p"]);
       bool wasStopped = g_stopReq;
       g_running = false;
       g_stopReq = false;
