@@ -235,7 +235,7 @@ const friendly = (m) => FRIENDLY[m] || m;
 // =====================================================================
 const $ = (id) => document.getElementById(id);
 let port = null, writer = null, reader = null, pingTimer = null, connected = false, running = false, sensorOk = false;
-let link = null;                       // { write(str) }: USB oppure simulatore
+let link = null, readDone = null, closing = false;                       // { write(str) }: USB oppure simulatore
 let sim = null, simTimer = null;
 const enc = new TextEncoder();
 
@@ -278,7 +278,7 @@ async function connect() {
     return;
   }
   writer = port.writable.getWriter(); link = usbLink(); connected = true; sensorOk = false; say("");
-  refreshUi(); readLoop();
+  refreshUi(); readDone = readLoop();
   setTimeout(() => send({ c:"hello" }), 1800);             // l'ESP32 può riavviarsi all'apertura della porta
   pingTimer = setInterval(() => send({ c:"ping" }), 500);
 }
@@ -301,10 +301,12 @@ async function disconnect() {
   clearInterval(pingTimer); pingTimer = null;
   if (sim) { clearInterval(simTimer); simTimer = null; sim = null; link = null; connected = false; running = false; sensorOk = false; hist.length = 0; refreshUi(); return; }
   try { await send({ c:"stop" }); } catch (e) {}
+  closing = true;
   try { if (reader) await reader.cancel(); } catch (e) {}
+  try { if (readDone) await readDone; } catch (e) {}       // il ciclo di lettura deve rilasciare il blocco prima di chiudere
   try { if (writer) { writer.releaseLock(); } } catch (e) {}
   try { if (port) await port.close(); } catch (e) {}
-  port = writer = reader = link = null; connected = false; running = false; refreshUi();
+  port = writer = reader = link = readDone = null; connected = false; running = false; closing = false; refreshUi();
 }
 async function readLoop() {
   reader = port.readable.getReader(); const dec = new TextDecoder(); let buf = "";
@@ -317,7 +319,7 @@ async function readLoop() {
     }
   } catch (e) { logLine("Collegamento interrotto: " + e.message, "err"); }
   try { reader.releaseLock(); } catch (e) {}
-  if (connected) { clearInterval(pingTimer); connected = false; running = false; port = writer = reader = link = null; say("Cavo scollegato.", true); refreshUi(); }
+  if (connected && !closing) { clearInterval(pingTimer); connected = false; running = false; port = writer = reader = link = null; say("Cavo scollegato.", true); refreshUi(); }
 }
 
 // ---------------- messaggi dall'ESP32 ----------------
