@@ -17,7 +17,7 @@
     const cfg = { center: 90, limit: 20, inv: false };
     // --- stato condiviso (come g_* nel firmware)
     const S = { t: 0, pos: 0, posOk: false, sp: 20, angle: 0, pid: false, kp: 2, ki: 0, kd: 1,
-                running: false, stopReq: false, lastPing: 0, lastGood: 0 };
+                running: false, stopReq: false, lastPing: 0, lastGood: 0, cur: -1 };
     let prog = null, gen = null, wakeAt = 0, progLoaded = false;
     // --- mondo fisico
     const P = { x: o.x0 === null ? o.length / 2 : o.x0, v: 0, servoDeg: 90, cmdDeg: 90, theta: 0 };
@@ -43,6 +43,7 @@
       pidOff: () => { S.pid = false; },
       say: (v) => emit({ e: "log", v }),
       fail: (m) => { emit({ e: "err", m }); S.stopReq = true; },
+      stmt: (id) => { S.cur = id; },
     };
     const interp = createInterp(host);
 
@@ -50,7 +51,7 @@
       if (!gen || S.t < wakeAt) return;
       const r = gen.next();
       if (!r.done) { wakeAt = S.t + r.value; return; }
-      gen = null;
+      gen = null; S.cur = -1;
       const wasStopped = S.stopReq;
       S.running = false; S.stopReq = false;
       setManual(0);
@@ -123,7 +124,7 @@
           if (!progLoaded) return emit({ e: "err", m: "nessun programma" });
           if (!S.posOk) return emit({ e: "err", m: "sensore non valido" });
           S.stopReq = false; S.running = true; S.lastPing = S.t;
-          gen = interp.run(prog); wakeAt = S.t;
+          S.cur = -1; gen = interp.run(prog); wakeAt = S.t;
           break;
         case "stop":
           S.stopReq = true;
@@ -152,7 +153,11 @@
         physics();
         if (S.t % 20 === 0) control();
         advanceProgram();
-        if (S.t % 50 === 0) emit({ t: S.t, x: +S.pos.toFixed(1), sp: S.sp, a: +S.angle.toFixed(1), run: S.running ? 1 : 0, pid: S.pid ? 1 : 0, ok: S.posOk ? 1 : 0 });
+        if (S.t % 50 === 0) {
+          const m = { t: S.t, x: +S.pos.toFixed(1), sp: S.sp, a: +S.angle.toFixed(1), run: S.running ? 1 : 0, pid: S.pid ? 1 : 0, ok: S.posOk ? 1 : 0 };
+          if (S.running && S.cur >= 0) m.s = S.cur;
+          emit(m);
+        }
       }
     }
     control();   // prima misura (il sensore del firmware è pronto in pochi ms)

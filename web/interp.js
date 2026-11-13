@@ -3,7 +3,7 @@
 // Differenze solo meccaniche: qui il "sonno" è un `yield <ms>` (generatore), così nel browser
 // l'interprete non blocca la pagina. I numeri sono float a 32 bit come sul firmware (Math.fround).
 //
-// Host: { nowMs(), halted(), pos(), sp(), angle(), servo(v), setpoint(v), pidOn(kp,ki,kd), pidOff(), say(v), fail(msg) }
+// Host: { nowMs(), halted(), pos(), sp(), angle(), servo(v), setpoint(v), pidOn(kp,ki,kd), pidOff(), say(v), fail(msg), stmt(id) }
 (function (root) {
   "use strict";
   const f = Math.fround;
@@ -79,6 +79,7 @@
     function* execStmt(s, depth) {
       if (depth > MAX_DEPTH) { h.fail("programma troppo annidato"); return; }
       if (!isObj(s)) return;
+      h.stmt(Number.isInteger(s.i) && s.i >= -2147483648 && s.i <= 2147483647 ? s.i : -1);
       switch (s.o) {
         case "servo": h.servo(evalE(s.v)); break;
         case "wait": yield* waitMs(Math.trunc(f(clampf(evalE(s.v), 0, 3600) * 1000))); break;

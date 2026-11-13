@@ -145,6 +145,12 @@ const cases = [
       { o: "if", c: 1, t: "non-una-lista" }, { o: "repeat", n: 2, b: { o: "say" } }, say(4),
     ], expect: { events: ["say 0", "say 0", "say 0", "say 0", "say 0", "say 0", "servo 0", "say 1", "say 0", "say 4"] } },
 
+  { name: "indice_istruzione_per_evidenziare", traceStmt: true, prog: [
+      { o: "servo", v: 1, i: 0 }, { o: "if", c: 1, t: [{ o: "say", v: 2, i: 2 }], i: 1 }, { o: "say", v: 3 },
+      { o: "say", v: 4, i: 1.5 }, rep(2, [{ o: "say", v: 5, i: 7 }]), { o: "say", v: 6, i: "3" }, { o: "say", v: 7, i: 3000000000 },
+    ], expect: { events: ["@0", "servo 1", "@1", "@2", "say 2", "@-1", "say 3", "@-1", "say 4", "@-1", "@7", "say 5", "@7", "say 5",
+      "@-1", "say 6", "@-1", "say 7"] } },
+
   { name: "programma_vuoto", prog: [], expect: { events: [], end: [0, 0] } },
 ];
 

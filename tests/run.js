@@ -37,6 +37,7 @@ function runJs(c) {
     pidOff: () => add("pid_off"),
     say: (v) => add("say " + fmt(v)),
     fail: (m) => { add("fail " + m); st.stopped = true; },
+    stmt: (id) => { if (c.traceStmt) add("@" + id); },
   };
   const it = createInterp(host).run(c.prog);
   for (let r = it.next(); !r.done; r = it.next()) st.clock += r.value;

@@ -29,7 +29,7 @@ struct TestHost : bb::Host {
   uint32_t clock = 0, stopAt = 0xFFFFFFFFu, maxMs = 10000000;
   std::vector<std::pair<uint32_t, float>> posSteps;
   float spv = 20, ang = 0;
-  bool stopped = false, sawHalt = false;
+  bool stopped = false, sawHalt = false, traceStmt = false;
   std::vector<Ev> ev;
 
   void add(const std::string& s) { ev.push_back({s, clock}); }
@@ -53,6 +53,7 @@ struct TestHost : bb::Host {
   void pidOff() override { add("pid_off"); }
   void say(float v) override { add("say " + fmt(v)); }
   void fail(const char* m) override { add(std::string("fail ") + m); stopped = true; }
+  void stmt(int id) override { if (traceStmt) add("@" + std::to_string(id)); }
 };
 
 static std::string esc(const std::string& s) {
@@ -72,6 +73,7 @@ int main(int argc, char** argv) {
     JsonVariant pv = c["pos"];
     if (pv.is<JsonArray>()) for (JsonArray p : pv.as<JsonArray>()) h.posSteps.push_back({p[0].as<uint32_t>(), p[1].as<float>()});
     else h.posSteps.push_back({0, pv.isNull() ? 20.0f : pv.as<float>()});
+    h.traceStmt = c["traceStmt"] | false;
     if (!c["stopAt"].isNull()) h.stopAt = c["stopAt"].as<uint32_t>();
     bb::Interp interp(h);
     interp.run(c["prog"]);
