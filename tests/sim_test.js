@@ -110,5 +110,36 @@ const evs = (r, e) => r.lines.filter((l) => l.e === e);
   ok(evs(r, "log").length === 1 && evs(r, "log")[0].v === 3.5, "blocco mostra -> evento log");
 }
 
+// 10. modalità PID (tune): parametri cambiati al volo, il controllo resta sul dispositivo
+{
+  const r = rig({ x0: 55, length: 70 });
+  r.send({ c: "tune", on: 1, sp: 20, kp: 2, ki: 0, kd: 1 });
+  r.run(8000);
+  ok(r.last().run === 1 && r.last().pid === 1 && Math.abs(r.last().x - 20) < 1, `tune: palla da 55 a 20 cm (x=${r.last().x})`);
+  r.send({ c: "tune", sp: 45 }); r.run(8000);
+  ok(Math.abs(r.last().x - 45) < 1 && r.last().sp === 45, `tune: nuovo obiettivo al volo (x=${r.last().x})`);
+  r.send({ c: "tune", sp: 20, kp: 0 }); r.run(500);
+  ok(Math.abs(r.last().a) < 0.5, "tune: con Kp=0 e Ki=0 il PID non spinge (a=" + r.last().a + ")");
+  r.send({ c: "tune", on: 0 }); r.run(200);
+  ok(r.last().run === 0 && r.last().pid === 0 && r.last().a === 0, "tune off: trave a zero");
+  r.send({ c: "tune", on: 1, kp: 999, ki: 999, kd: 999 }); r.run(200);
+  r.send({ c: "stop" }); r.run(200);
+  ok(r.last().run === 0 && r.last().a === 0, "STOP ferma la modalità PID");
+}
+{
+  const r = rig({ x0: 30 });
+  r.send({ c: "tune", on: 1, sp: 20, kp: 2, ki: 0, kd: 1 }); r.run(1000);
+  r.run(3000, false);
+  ok(evs(r, "err").some((e) => /connessione persa/.test(e.m)) && r.last().run === 0 && r.last().a === 0, "tune: senza ping per 2 s -> stop e trave a zero");
+  r.send({ c: "cfg", limit: 10 });
+  const q = rig({}); q.send({ c: "tune", on: 1 }); q.send({ c: "cfg", limit: 10 }); ok(evs(q, "err").pop().m === "ferma il programma prima", "cfg rifiutato in modalità PID");
+  q.send({ c: "angle", v: 15 }); q.run(100); ok(Math.abs(q.last().a) < 15, "angle manuale ignorato in modalità PID");
+  q.prog([{ o: "wait", v: 0.1 }]); q.send({ c: "tune", sp: 5 }); ok(q.last() !== undefined, "tune durante programma gestito");
+}
+{
+  const r = rig({});
+  r.prog([{ o: "forever", b: [] }]); r.run(100);
+  r.send({ c: "tune", on: 1 }); ok(evs(r, "err").pop().m === "ferma il programma prima", "tune rifiutato mentre gira un programma");
+}
 console.log(fails ? `\n${fails} controlli falliti` : "\ntutti i controlli del simulatore passano");
 process.exit(fails ? 1 : 0);

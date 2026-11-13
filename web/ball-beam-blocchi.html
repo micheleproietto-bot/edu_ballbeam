@@ -41,6 +41,16 @@
   #msg.err { color:var(--bad); }
   input[type=range] { width:100%; }
   .hint { font-size:12.5px; color:var(--muted); }
+  .seg { display:inline-flex; } .seg button { border-radius:0; padding:5px 14px; background:#2c3a4a; color:#fff; border-color:#3a4a5c; }
+  .seg button:first-child { border-radius:8px 0 0 8px; } .seg button:last-child { border-radius:0 8px 8px 0; }
+  .seg button.on { background:var(--brand); border-color:var(--brand); }
+  #pidPanel { position:absolute; inset:0; overflow:auto; background:var(--bg); padding:22px; }
+  .pidwrap { max-width:640px; margin:0 auto; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px 22px; }
+  .pidwrap h2 { margin:0 0 6px; font-size:18px; }
+  .ctl { display:grid; grid-template-columns:190px 1fr 70px; gap:12px; align-items:center; margin:16px 0; }
+  .ctl label { font-weight:600; } .ctl small { display:block; font-weight:400; color:var(--muted); font-size:12px; }
+  .ctl output { font:600 20px ui-monospace, Consolas, monospace; text-align:right; }
+  .ctl input[type=range] { height:28px; }
   .blocklyHighlighted > .blocklyPath { stroke:#facc15 !important; stroke-width:5px !important; }
   [hidden] { display:none !important; }
 </style>
@@ -48,7 +58,8 @@
 <body>
 <header>
   <h1>⚖️ Ball &amp; Beam a blocchi</h1>
-  <label style="font-size:13px">Livello
+  <span class="seg"><button id="modePid">PID</button><button id="modeBlk">Blocchi</button></span>
+  <label id="levelWrap" style="font-size:13px" hidden>Livello
     <select id="level" style="margin-left:4px">
       <option value="1">1 · Primi passi</option>
       <option value="2">2 · Logica</option>
@@ -61,7 +72,24 @@
   <button id="btnConnect" class="primary">Connetti USB</button>
 </header>
 <main>
-  <div id="work"><div id="blocklyDiv"></div></div>
+  <div id="work">
+    <div id="blocklyDiv"></div>
+    <div id="pidPanel">
+      <div class="pidwrap">
+        <h2>Regolatore PID</h2>
+        <p class="hint">Il controllo gira sull'ESP32 ad alta frequenza. Qui cambi solo i parametri: la pagina li manda alla scheda circa 10 volte al secondo, anche mentre il PID è in funzione.</p>
+        <div class="ctl"><label>Obiettivo<small>dove portare la palla (cm dal sensore)</small></label><input type="range" id="sSp" min="0" max="70" step="0.5" value="20"><output id="oSp"></output></div>
+        <div class="ctl"><label>P · Kp<small>quanto spinge in base alla distanza dall'obiettivo</small></label><input type="range" id="sKp" min="0" max="10" step="0.05" value="1"><output id="oKp"></output></div>
+        <div class="ctl"><label>I · Ki<small>corregge l'errore che resta a lungo (da usare poco)</small></label><input type="range" id="sKi" min="0" max="3" step="0.01" value="0"><output id="oKi"></output></div>
+        <div class="ctl"><label>D · Kd<small>frena la palla quando corre verso l'obiettivo</small></label><input type="range" id="sKd" min="0" max="10" step="0.05" value="0.5"><output id="oKd"></output></div>
+        <div class="row" style="margin-top:14px">
+          <button id="pidRun" class="go" disabled>▶ AVVIA PID</button>
+          <button id="pidStop" class="stop" disabled>■ STOP</button>
+        </div>
+        <p class="hint">Consiglio: parti con I = 0 e D basso. Se la palla oscilla aumenta D o diminuisci P; se è pigra aumenta P. L'angolo massimo della trave è il “Limite ±” della calibrazione.</p>
+      </div>
+    </div>
+  </div>
   <aside>
     <div class="row">
       <button id="btnRun" class="go" disabled>▶ AVVIA</button>
@@ -101,7 +129,7 @@
       <div id="log"></div>
     </div>
 
-    <div class="card">
+    <div class="card" id="progCard">
       <h2>Programma</h2>
       <div class="row">
         <label style="flex:1">Esempi <select id="examples" style="flex:1"></select></label>
@@ -3903,7 +3931,7 @@ return Blockly.Msg;
     const cfg = { center: 90, limit: 20, inv: false };
     // --- stato condiviso (come g_* nel firmware)
     const S = { t: 0, pos: 0, posOk: false, sp: 20, angle: 0, pid: false, kp: 2, ki: 0, kd: 1,
-                running: false, stopReq: false, lastPing: 0, lastGood: 0, cur: -1 };
+                running: false, tune: false, stopReq: false, lastPing: 0, lastGood: 0, cur: -1 };
     let prog = null, gen = null, wakeAt = 0, progLoaded = false;
     // --- mondo fisico
     const P = { x: o.x0 === null ? o.length / 2 : o.x0, v: 0, servoDeg: 90, cmdDeg: 90, theta: 0 };
@@ -3965,6 +3993,10 @@ return Blockly.Msg;
       if (S.running && !S.stopReq && !S.posOk) { emit({ e: "err", m: "sensore non valido: stop" }); S.stopReq = true; }
       if (S.running && !S.stopReq && S.t - S.lastPing > 2000) { emit({ e: "err", m: "connessione persa: stop" }); S.stopReq = true; }
       if (S.stopReq && !S.running) S.stopReq = false;
+      let tuneFail = false;                                         // modalità PID: stesse sicurezze del programma
+      if (S.tune && !S.posOk) { emit({ e: "err", m: "sensore non valido: stop" }); tuneFail = true; }
+      else if (S.tune && S.t - S.lastPing > 2000) { emit({ e: "err", m: "connessione persa: stop" }); tuneFail = true; }
+      if (tuneFail) { S.tune = false; S.pid = false; }
       if (S.pid && S.posOk) {
         const err = S.sp - S.pos;
         if (!C.prevPid) { C.integ = 0; C.prevPos = S.pos; C.dFilt = 0; }
@@ -3976,6 +4008,7 @@ return Blockly.Msg;
       } else if (S.pid && !S.posOk) writeServo(0);
       C.prevPid = S.pid;
       if (S.stopReq) { S.pid = false; writeServo(0); }
+      if (tuneFail) writeServo(0);
     }
 
     // ---------- comandi (porting di handleLine) ----------
@@ -3995,7 +4028,7 @@ return Blockly.Msg;
         case "hello": emit({ e: "hello", v: 1, fw: "sim", ok: S.posOk ? 1 : 0, limit: cfg.limit }); break;
         case "ping": break;
         case "cfg":
-          if (S.running) return emit({ e: "err", m: "ferma il programma prima" });
+          if (S.running || S.tune) return emit({ e: "err", m: "ferma il programma prima" });
           if (typeof d.center === "number") cfg.center = clampf(d.center, 60, 120);
           if (typeof d.limit === "number") cfg.limit = clampf(d.limit, 1, HARD_LIMIT);
           if (d.inv !== undefined && d.inv !== null) cfg.inv = Number(d.inv) !== 0;
@@ -4005,18 +4038,31 @@ return Blockly.Msg;
           prog = d.p; progLoaded = prog !== undefined && prog !== null;
           if (progLoaded) emit({ e: "ok" }); else emit({ e: "err", m: "programma vuoto" });
           break;
+        case "tune":                                                 // {"c":"tune","on":1,"sp":..,"kp":..,"ki":..,"kd":..}
+          if (S.running) return emit({ e: "err", m: "ferma il programma prima" });
+          if (typeof d.sp === "number") S.sp = clampf(d.sp, 0, 100);
+          if (typeof d.kp === "number") S.kp = clampf(d.kp, 0, 50);
+          if (typeof d.ki === "number") S.ki = clampf(d.ki, 0, 20);
+          if (typeof d.kd === "number") S.kd = clampf(d.kd, 0, 20);
+          if (d.on !== undefined && d.on !== null) {
+            if (Number(d.on) !== 0) {
+              if (!S.posOk) return emit({ e: "err", m: "sensore non valido" });
+              S.stopReq = false; S.tune = true; S.pid = true;
+            } else { S.tune = false; S.pid = false; writeServo(0); }
+          }
+          break;
         case "run":
           if (S.running) return emit({ e: "err", m: "già in esecuzione" });
           if (!progLoaded) return emit({ e: "err", m: "nessun programma" });
           if (!S.posOk) return emit({ e: "err", m: "sensore non valido" });
-          S.stopReq = false; S.running = true; S.lastPing = S.t;
+          S.stopReq = false; S.tune = false; S.running = true; S.lastPing = S.t;
           S.cur = -1; gen = interp.run(prog); wakeAt = S.t;
           break;
         case "stop":
           S.stopReq = true;
-          if (!S.running) { setManual(0); S.stopReq = false; }
+          if (!S.running) { S.tune = false; setManual(0); S.stopReq = false; }
           break;
-        case "angle": if (!S.running) setManual(typeof d.v === "number" ? d.v : 0); break;
+        case "angle": if (!S.running && !S.tune) setManual(typeof d.v === "number" ? d.v : 0); break;
         default: emit({ e: "err", m: "comando sconosciuto" });
       }
     }
@@ -4040,7 +4086,7 @@ return Blockly.Msg;
         if (S.t % 20 === 0) control();
         advanceProgram();
         if (S.t % 50 === 0) {
-          const m = { t: S.t, x: +S.pos.toFixed(1), sp: S.sp, a: +S.angle.toFixed(1), run: S.running ? 1 : 0, pid: S.pid ? 1 : 0, ok: S.posOk ? 1 : 0 };
+          const m = { t: S.t, x: +S.pos.toFixed(1), sp: S.sp, a: +S.angle.toFixed(1), run: (S.running || S.tune) ? 1 : 0, pid: S.pid ? 1 : 0, ok: S.posOk ? 1 : 0 };
           if (S.running && S.cur >= 0) m.s = S.cur;
           emit(m);
         }
@@ -4334,6 +4380,7 @@ function refreshUi() {
   $("sensorBadge").className = "badge " + (connected ? (sensorOk ? "ok" : "bad") : "");
   $("btnConnect").textContent = connected ? "Disconnetti" : "Connetti USB";
   $("btnRun").disabled = !connected || running; $("btnStop").disabled = !connected;
+  $("pidRun").disabled = !connected || running; $("pidStop").disabled = !connected;
   $("tryAngle").disabled = !connected || running;
 }
 async function sendRaw(str) { await link.write(str); }
@@ -4427,8 +4474,10 @@ function handleLine(line) {
   $("vPos").textContent = o.ok ? (+o.x).toFixed(1) : "–"; $("vSp").textContent = o.pid ? (+o.sp).toFixed(1) : "–"; $("vAng").textContent = (+o.a).toFixed(1);
   lastSp = o.pid ? +o.sp : null;
   highlight(running && o.s !== undefined ? blockIds[o.s] : null);
+  if (pidOn && !running && performance.now() - pidStartedAt > 1500) { pidOn = false; refreshUi(); }   // fermato dalla scheda (sicurezze)
 }
 let hlId = null, runStart = 0, runUsesServo = false;
+let mode = "pid", pidOn = false, pidDirty = false, pidStartedAt = 0;
 function highlight(id) { id = id || null; if (id === hlId) return; hlId = id; try { ws.highlightBlock(id); } catch (e) {} }
 
 // ---------------- grafico ----------------
@@ -4501,15 +4550,53 @@ $("btnConnect").onclick = () => (connected ? disconnect() : connect());
 $("btnSim").onclick = () => (sim ? disconnect() : connectSim());
 $("simBall").oninput = (e) => { if (sim) sim.setBall((e.target.value / 100) * (+$("cLen").value || 70)); };
 $("simMount").onchange = (e) => { if (sim) sim.setMountInverted(e.target.checked); };
-$("btnRun").onclick = run;
-$("btnStop").onclick = () => { send({ c:"stop" }); say(""); highlight(null); };
+// ---------------- modalità PID: parametri regolati dal browser, controllo sull'ESP32 ----------------
+const pidVals = () => ({ sp:+$("sSp").value, kp:+$("sKp").value, ki:+$("sKi").value, kd:+$("sKd").value });
+function pidShow() {
+  const v = pidVals();
+  $("oSp").textContent = v.sp.toFixed(1); $("oKp").textContent = v.kp.toFixed(2); $("oKi").textContent = v.ki.toFixed(2); $("oKd").textContent = v.kd.toFixed(2);
+}
+for (const id of ["sSp", "sKp", "sKi", "sKd"]) $(id).oninput = () => {
+  pidShow(); pidDirty = true;
+  try { localStorage.setItem("bb_pid", JSON.stringify(pidVals())); } catch (e) {}
+};
+try { const v = JSON.parse(localStorage.getItem("bb_pid") || "null"); if (v) { $("sSp").value = v.sp; $("sKp").value = v.kp; $("sKi").value = v.ki; $("sKd").value = v.kd; } } catch (e) {}
+function syncSpRange() { $("sSp").max = Math.max(10, +$("cLen").value || 70); pidShow(); }
+syncSpRange();
+async function runPid() {
+  if (!connected) return;
+  say(""); hist.length = 0;
+  await send(cfgObj()); await new Promise((r) => setTimeout(r, 100));
+  pidOn = true; pidDirty = false; pidStartedAt = performance.now();
+  await send({ c:"tune", on:1, ...pidVals() });
+  logLine("PID avviato: obiettivo " + pidVals().sp + " cm", "info");
+}
+function stopPid() { pidOn = false; send({ c:"stop" }); say(""); highlight(null); }
+let pidTick = 0;
+setInterval(() => {                                        // aggiorna i parametri sulla scheda, più lentamente del controllo
+  if (!connected || !pidOn) return;
+  if (pidDirty || ++pidTick % 5 === 0) { pidDirty = false; send({ c:"tune", ...pidVals() }); }
+}, 100);
+$("pidRun").onclick = runPid; $("pidStop").onclick = stopPid;
+function setMode(m) {
+  if (m !== mode && (running || pidOn)) { pidOn = false; send({ c:"stop" }); }
+  mode = m;
+  $("pidPanel").hidden = m !== "pid"; $("blocklyDiv").hidden = m === "pid"; $("levelWrap").hidden = m === "pid"; $("progCard").hidden = m === "pid";
+  $("modePid").classList.toggle("on", m === "pid"); $("modeBlk").classList.toggle("on", m !== "pid");
+  try { localStorage.setItem("bb_mode", m); } catch (e) {}
+  if (m !== "pid") setTimeout(() => Blockly.svgResize(ws), 0);
+  say("");
+}
+$("modePid").onclick = () => setMode("pid"); $("modeBlk").onclick = () => setMode("blocks");
+$("btnRun").onclick = () => (mode === "pid" ? runPid() : run());
+$("btnStop").onclick = () => { stopPid(); };
 $("tryAngle").oninput = (e) => { $("tryVal").textContent = e.target.value; if (!running) send({ c:"angle", v:+e.target.value }); };
 for (const id of ["cCenter", "cLimit", "cInv"]) $(id).onchange = () => {
   const l = Math.min(35, Math.max(1, +$("cLimit").value || 20)); $("cLimit").value = l; $("tryAngle").min = -l; $("tryAngle").max = l;
   try { localStorage.setItem("bb_cfg", JSON.stringify({ c:$("cCenter").value, l:$("cLimit").value, i:$("cInv").checked, n:$("cLen").value })); } catch (e) {}
   if (connected && !running) send(cfgObj());
 };
-$("cLen").onchange = () => { $("cCenter").onchange(); if (sim) sim.setLength(+$("cLen").value || 70); };
+$("cLen").onchange = () => { $("cCenter").onchange(); syncSpRange(); if (sim) sim.setLength(+$("cLen").value || 70); };
 try { const s = JSON.parse(localStorage.getItem("bb_cfg") || "null"); if (s) { $("cCenter").value = s.c; $("cLimit").value = s.l; $("cInv").checked = s.i; $("cLen").value = s.n; $("tryAngle").min = -s.l; $("tryAngle").max = s.l; } } catch (e) {}
 
 $("level").onchange = (e) => ws.updateToolbox(toolboxFor(+e.target.value));
@@ -4532,6 +4619,9 @@ $("fileIn").onchange = async (e) => { const f = e.target.files[0]; if (!f) retur
 window.addEventListener("resize", () => Blockly.svgResize(ws));
 window.addEventListener("beforeunload", () => { if (connected) send({ c:"stop" }); });
 refreshUi();
+
+let m0 = "pid"; try { m0 = localStorage.getItem("bb_mode") || "pid"; } catch (e) {}
+setMode(m0 === "blocks" ? "blocks" : "pid");
 </script>
 </body>
 </html>

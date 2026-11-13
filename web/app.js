@@ -271,6 +271,7 @@ function refreshUi() {
   $("sensorBadge").className = "badge " + (connected ? (sensorOk ? "ok" : "bad") : "");
   $("btnConnect").textContent = connected ? "Disconnetti" : "Connetti USB";
   $("btnRun").disabled = !connected || running; $("btnStop").disabled = !connected;
+  $("pidRun").disabled = !connected || running; $("pidStop").disabled = !connected;
   $("tryAngle").disabled = !connected || running;
 }
 async function sendRaw(str) { await link.write(str); }
@@ -364,8 +365,10 @@ function handleLine(line) {
   $("vPos").textContent = o.ok ? (+o.x).toFixed(1) : "–"; $("vSp").textContent = o.pid ? (+o.sp).toFixed(1) : "–"; $("vAng").textContent = (+o.a).toFixed(1);
   lastSp = o.pid ? +o.sp : null;
   highlight(running && o.s !== undefined ? blockIds[o.s] : null);
+  if (pidOn && !running && performance.now() - pidStartedAt > 1500) { pidOn = false; refreshUi(); }   // fermato dalla scheda (sicurezze)
 }
 let hlId = null, runStart = 0, runUsesServo = false;
+let mode = "pid", pidOn = false, pidDirty = false, pidStartedAt = 0;
 function highlight(id) { id = id || null; if (id === hlId) return; hlId = id; try { ws.highlightBlock(id); } catch (e) {} }
 
 // ---------------- grafico ----------------
@@ -438,15 +441,53 @@ $("btnConnect").onclick = () => (connected ? disconnect() : connect());
 $("btnSim").onclick = () => (sim ? disconnect() : connectSim());
 $("simBall").oninput = (e) => { if (sim) sim.setBall((e.target.value / 100) * (+$("cLen").value || 70)); };
 $("simMount").onchange = (e) => { if (sim) sim.setMountInverted(e.target.checked); };
-$("btnRun").onclick = run;
-$("btnStop").onclick = () => { send({ c:"stop" }); say(""); highlight(null); };
+// ---------------- modalità PID: parametri regolati dal browser, controllo sull'ESP32 ----------------
+const pidVals = () => ({ sp:+$("sSp").value, kp:+$("sKp").value, ki:+$("sKi").value, kd:+$("sKd").value });
+function pidShow() {
+  const v = pidVals();
+  $("oSp").textContent = v.sp.toFixed(1); $("oKp").textContent = v.kp.toFixed(2); $("oKi").textContent = v.ki.toFixed(2); $("oKd").textContent = v.kd.toFixed(2);
+}
+for (const id of ["sSp", "sKp", "sKi", "sKd"]) $(id).oninput = () => {
+  pidShow(); pidDirty = true;
+  try { localStorage.setItem("bb_pid", JSON.stringify(pidVals())); } catch (e) {}
+};
+try { const v = JSON.parse(localStorage.getItem("bb_pid") || "null"); if (v) { $("sSp").value = v.sp; $("sKp").value = v.kp; $("sKi").value = v.ki; $("sKd").value = v.kd; } } catch (e) {}
+function syncSpRange() { $("sSp").max = Math.max(10, +$("cLen").value || 70); pidShow(); }
+syncSpRange();
+async function runPid() {
+  if (!connected) return;
+  say(""); hist.length = 0;
+  await send(cfgObj()); await new Promise((r) => setTimeout(r, 100));
+  pidOn = true; pidDirty = false; pidStartedAt = performance.now();
+  await send({ c:"tune", on:1, ...pidVals() });
+  logLine("PID avviato: obiettivo " + pidVals().sp + " cm", "info");
+}
+function stopPid() { pidOn = false; send({ c:"stop" }); say(""); highlight(null); }
+let pidTick = 0;
+setInterval(() => {                                        // aggiorna i parametri sulla scheda, più lentamente del controllo
+  if (!connected || !pidOn) return;
+  if (pidDirty || ++pidTick % 5 === 0) { pidDirty = false; send({ c:"tune", ...pidVals() }); }
+}, 100);
+$("pidRun").onclick = runPid; $("pidStop").onclick = stopPid;
+function setMode(m) {
+  if (m !== mode && (running || pidOn)) { pidOn = false; send({ c:"stop" }); }
+  mode = m;
+  $("pidPanel").hidden = m !== "pid"; $("blocklyDiv").hidden = m === "pid"; $("levelWrap").hidden = m === "pid"; $("progCard").hidden = m === "pid";
+  $("modePid").classList.toggle("on", m === "pid"); $("modeBlk").classList.toggle("on", m !== "pid");
+  try { localStorage.setItem("bb_mode", m); } catch (e) {}
+  if (m !== "pid") setTimeout(() => Blockly.svgResize(ws), 0);
+  say("");
+}
+$("modePid").onclick = () => setMode("pid"); $("modeBlk").onclick = () => setMode("blocks");
+$("btnRun").onclick = () => (mode === "pid" ? runPid() : run());
+$("btnStop").onclick = () => { stopPid(); };
 $("tryAngle").oninput = (e) => { $("tryVal").textContent = e.target.value; if (!running) send({ c:"angle", v:+e.target.value }); };
 for (const id of ["cCenter", "cLimit", "cInv"]) $(id).onchange = () => {
   const l = Math.min(35, Math.max(1, +$("cLimit").value || 20)); $("cLimit").value = l; $("tryAngle").min = -l; $("tryAngle").max = l;
   try { localStorage.setItem("bb_cfg", JSON.stringify({ c:$("cCenter").value, l:$("cLimit").value, i:$("cInv").checked, n:$("cLen").value })); } catch (e) {}
   if (connected && !running) send(cfgObj());
 };
-$("cLen").onchange = () => { $("cCenter").onchange(); if (sim) sim.setLength(+$("cLen").value || 70); };
+$("cLen").onchange = () => { $("cCenter").onchange(); syncSpRange(); if (sim) sim.setLength(+$("cLen").value || 70); };
 try { const s = JSON.parse(localStorage.getItem("bb_cfg") || "null"); if (s) { $("cCenter").value = s.c; $("cLimit").value = s.l; $("cInv").checked = s.i; $("cLen").value = s.n; $("tryAngle").min = -s.l; $("tryAngle").max = s.l; } } catch (e) {}
 
 $("level").onchange = (e) => ws.updateToolbox(toolboxFor(+e.target.value));
@@ -469,3 +510,6 @@ $("fileIn").onchange = async (e) => { const f = e.target.files[0]; if (!f) retur
 window.addEventListener("resize", () => Blockly.svgResize(ws));
 window.addEventListener("beforeunload", () => { if (connected) send({ c:"stop" }); });
 refreshUi();
+
+let m0 = "pid"; try { m0 = localStorage.getItem("bb_mode") || "pid"; } catch (e) {}
+setMode(m0 === "blocks" ? "blocks" : "pid");

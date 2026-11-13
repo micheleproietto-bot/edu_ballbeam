@@ -17,7 +17,7 @@
     const cfg = { center: 90, limit: 20, inv: false };
     // --- stato condiviso (come g_* nel firmware)
     const S = { t: 0, pos: 0, posOk: false, sp: 20, angle: 0, pid: false, kp: 2, ki: 0, kd: 1,
-                running: false, stopReq: false, lastPing: 0, lastGood: 0, cur: -1 };
+                running: false, tune: false, stopReq: false, lastPing: 0, lastGood: 0, cur: -1 };
     let prog = null, gen = null, wakeAt = 0, progLoaded = false;
     // --- mondo fisico
     const P = { x: o.x0 === null ? o.length / 2 : o.x0, v: 0, servoDeg: 90, cmdDeg: 90, theta: 0 };
@@ -79,6 +79,10 @@
       if (S.running && !S.stopReq && !S.posOk) { emit({ e: "err", m: "sensore non valido: stop" }); S.stopReq = true; }
       if (S.running && !S.stopReq && S.t - S.lastPing > 2000) { emit({ e: "err", m: "connessione persa: stop" }); S.stopReq = true; }
       if (S.stopReq && !S.running) S.stopReq = false;
+      let tuneFail = false;                                         // modalità PID: stesse sicurezze del programma
+      if (S.tune && !S.posOk) { emit({ e: "err", m: "sensore non valido: stop" }); tuneFail = true; }
+      else if (S.tune && S.t - S.lastPing > 2000) { emit({ e: "err", m: "connessione persa: stop" }); tuneFail = true; }
+      if (tuneFail) { S.tune = false; S.pid = false; }
       if (S.pid && S.posOk) {
         const err = S.sp - S.pos;
         if (!C.prevPid) { C.integ = 0; C.prevPos = S.pos; C.dFilt = 0; }
@@ -90,6 +94,7 @@
       } else if (S.pid && !S.posOk) writeServo(0);
       C.prevPid = S.pid;
       if (S.stopReq) { S.pid = false; writeServo(0); }
+      if (tuneFail) writeServo(0);
     }
 
     // ---------- comandi (porting di handleLine) ----------
@@ -109,7 +114,7 @@
         case "hello": emit({ e: "hello", v: 1, fw: "sim", ok: S.posOk ? 1 : 0, limit: cfg.limit }); break;
         case "ping": break;
         case "cfg":
-          if (S.running) return emit({ e: "err", m: "ferma il programma prima" });
+          if (S.running || S.tune) return emit({ e: "err", m: "ferma il programma prima" });
           if (typeof d.center === "number") cfg.center = clampf(d.center, 60, 120);
           if (typeof d.limit === "number") cfg.limit = clampf(d.limit, 1, HARD_LIMIT);
           if (d.inv !== undefined && d.inv !== null) cfg.inv = Number(d.inv) !== 0;
@@ -119,18 +124,31 @@
           prog = d.p; progLoaded = prog !== undefined && prog !== null;
           if (progLoaded) emit({ e: "ok" }); else emit({ e: "err", m: "programma vuoto" });
           break;
+        case "tune":                                                 // {"c":"tune","on":1,"sp":..,"kp":..,"ki":..,"kd":..}
+          if (S.running) return emit({ e: "err", m: "ferma il programma prima" });
+          if (typeof d.sp === "number") S.sp = clampf(d.sp, 0, 100);
+          if (typeof d.kp === "number") S.kp = clampf(d.kp, 0, 50);
+          if (typeof d.ki === "number") S.ki = clampf(d.ki, 0, 20);
+          if (typeof d.kd === "number") S.kd = clampf(d.kd, 0, 20);
+          if (d.on !== undefined && d.on !== null) {
+            if (Number(d.on) !== 0) {
+              if (!S.posOk) return emit({ e: "err", m: "sensore non valido" });
+              S.stopReq = false; S.tune = true; S.pid = true;
+            } else { S.tune = false; S.pid = false; writeServo(0); }
+          }
+          break;
         case "run":
           if (S.running) return emit({ e: "err", m: "già in esecuzione" });
           if (!progLoaded) return emit({ e: "err", m: "nessun programma" });
           if (!S.posOk) return emit({ e: "err", m: "sensore non valido" });
-          S.stopReq = false; S.running = true; S.lastPing = S.t;
+          S.stopReq = false; S.tune = false; S.running = true; S.lastPing = S.t;
           S.cur = -1; gen = interp.run(prog); wakeAt = S.t;
           break;
         case "stop":
           S.stopReq = true;
-          if (!S.running) { setManual(0); S.stopReq = false; }
+          if (!S.running) { S.tune = false; setManual(0); S.stopReq = false; }
           break;
-        case "angle": if (!S.running) setManual(typeof d.v === "number" ? d.v : 0); break;
+        case "angle": if (!S.running && !S.tune) setManual(typeof d.v === "number" ? d.v : 0); break;
         default: emit({ e: "err", m: "comando sconosciuto" });
       }
     }
@@ -154,7 +172,7 @@
         if (S.t % 20 === 0) control();
         advanceProgram();
         if (S.t % 50 === 0) {
-          const m = { t: S.t, x: +S.pos.toFixed(1), sp: S.sp, a: +S.angle.toFixed(1), run: S.running ? 1 : 0, pid: S.pid ? 1 : 0, ok: S.posOk ? 1 : 0 };
+          const m = { t: S.t, x: +S.pos.toFixed(1), sp: S.sp, a: +S.angle.toFixed(1), run: (S.running || S.tune) ? 1 : 0, pid: S.pid ? 1 : 0, ok: S.posOk ? 1 : 0 };
           if (S.running && S.cur >= 0) m.s = S.cur;
           emit(m);
         }
