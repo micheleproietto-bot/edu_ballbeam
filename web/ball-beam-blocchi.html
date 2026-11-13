@@ -3,72 +3,133 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ball & Beam a blocchi</title>
+<title>Ball & Beam</title>
 <style>
-  :root { --bg:#f4f6f9; --panel:#fff; --ink:#1d2733; --muted:#6b7785; --line:#dde3ea; --brand:#2563eb;
-          --ok:#16a34a; --bad:#dc2626; --pos:#2563eb; --sp:#9333ea; --ang:#ea580c; }
-  * { box-sizing: border-box; }
-  html, body { height:100%; margin:0; font:15px system-ui, -apple-system, "Segoe UI", sans-serif; color:var(--ink); background:var(--bg); }
-  header { display:flex; align-items:center; gap:12px; padding:8px 14px; background:#16202c; color:#fff; }
-  header h1 { font-size:17px; margin:0; font-weight:600; flex:1; }
-  .badge { padding:3px 10px; border-radius:999px; font-size:13px; background:#2c3a4a; }
-  .badge.ok { background:var(--ok); } .badge.bad { background:var(--bad); }
-  button { font:inherit; border:1px solid var(--line); background:#fff; color:var(--ink); padding:7px 14px; border-radius:8px; cursor:pointer; }
-  button:hover { background:#eef2f7; } button:disabled { opacity:.45; cursor:not-allowed; }
-  button.primary { background:var(--brand); color:#fff; border-color:var(--brand); }
-  button.primary:hover { background:#1d4fd0; }
-  button.go { background:var(--ok); color:#fff; border-color:var(--ok); font-weight:600; font-size:16px; padding:9px 22px; }
-  button.stop { background:var(--bad); color:#fff; border-color:var(--bad); font-weight:600; font-size:16px; padding:9px 22px; }
-  main { display:grid; grid-template-columns:1fr 400px; height:calc(100% - 50px); }
-  #work { position:relative; }
+  :root { color-scheme: light dark;
+    --bg:#eef2f7; --panel:#ffffff; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --brand:#2563eb; --brand2:#7c3aed;
+    --ok:#16a34a; --bad:#dc2626; --warn:#f59e0b; --pos:#2563eb; --sp:#9333ea; --ang:#f97316; --err:#0891b2;
+    --plot:#f8fafc; --grid:#e2e8f0; --axis:#94a3b8; --field:#ffffff; --hover:#f1f5f9;
+    --shadow:0 1px 2px rgba(15,23,42,.06), 0 10px 28px rgba(15,23,42,.07); }
+  @media (prefers-color-scheme: dark) { :root {
+    --bg:#0a101d; --panel:#111a2c; --ink:#e6eefb; --muted:#8aa0bd; --line:#22304a; --plot:#0c1424; --grid:#1b2840; --axis:#6c819f;
+    --field:#0c1424; --hover:#18233a; --pos:#60a5fa; --sp:#c084fc; --ang:#fb923c; --err:#22d3ee;
+    --shadow:0 1px 0 rgba(255,255,255,.03), 0 10px 30px rgba(0,0,0,.35); } }
+  * { box-sizing:border-box; }
+  html, body { height:100%; margin:0; font:15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color:var(--ink); background:var(--bg); }
+  [hidden] { display:none !important; }
+
+  /* ---------- barra superiore ---------- */
+  header { display:flex; align-items:center; gap:10px; padding:0 16px; height:56px; color:#fff;
+           background:linear-gradient(100deg,#0b1b3a 0%,#1e3a8a 55%,#5b21b6 100%); box-shadow:0 2px 14px rgba(15,23,42,.35); position:relative; z-index:5; }
+  .logo { display:flex; align-items:center; gap:10px; flex:1; min-width:0; }
+  .logo svg { flex:none; filter:drop-shadow(0 2px 4px rgba(0,0,0,.35)); }
+  .logo b { font-size:18px; letter-spacing:.01em; } .logo small { display:block; font-size:11.5px; opacity:.7; margin-top:-2px; }
+  .chip { display:inline-flex; align-items:center; gap:7px; padding:4px 11px; border-radius:999px; font-size:12.5px; background:rgba(255,255,255,.12); backdrop-filter:blur(4px); white-space:nowrap; }
+  .chip::before { content:""; width:8px; height:8px; border-radius:50%; background:#94a3b8; }
+  .chip.ok::before { background:#4ade80; box-shadow:0 0 8px #4ade80; } .chip.bad::before { background:#f87171; box-shadow:0 0 8px #f87171; }
+  button { font:inherit; border:1px solid var(--line); background:var(--panel); color:var(--ink); padding:7px 14px; border-radius:10px; cursor:pointer; transition:background .15s, transform .05s, box-shadow .15s; }
+  button:hover { background:var(--hover); } button:active { transform:translateY(1px); } button:disabled { opacity:.4; cursor:not-allowed; }
+  header button { background:rgba(255,255,255,.14); border-color:rgba(255,255,255,.18); color:#fff; padding:6px 12px; }
+  header button:hover { background:rgba(255,255,255,.24); }
+  header button.primary { background:#fff; color:#1e3a8a; border-color:#fff; font-weight:600; }
+  header button.primary:hover { background:#e0e7ff; }
+  header select { background:rgba(255,255,255,.14); color:#fff; border:1px solid rgba(255,255,255,.2); border-radius:8px; padding:5px 8px; font:inherit; }
+  header select option { color:#111; }
+  .seg { display:inline-flex; background:rgba(255,255,255,.12); border-radius:12px; padding:3px; gap:2px; }
+  .seg button { border:0; background:transparent; border-radius:9px; padding:5px 16px; color:#dbe5ff; }
+  .seg button.on { background:#fff; color:#1e3a8a; font-weight:600; box-shadow:0 2px 8px rgba(0,0,0,.25); }
+
+  /* ---------- struttura ---------- */
+  main { display:grid; grid-template-columns:minmax(0,1fr) 380px; height:calc(100% - 56px); }
+  #work { position:relative; min-width:0; }
   #blocklyDiv { position:absolute; inset:0; }
-  aside { background:var(--panel); border-left:1px solid var(--line); padding:12px; overflow:auto; display:flex; flex-direction:column; gap:12px; }
-  .card { border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
-  .card h2 { margin:0 0 8px; font-size:14px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
+  aside { background:var(--panel); border-left:1px solid var(--line); padding:14px; overflow:auto; display:flex; flex-direction:column; gap:14px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:14px 16px; box-shadow:var(--shadow); }
+  aside .card { box-shadow:none; border-radius:14px; background:var(--bg); }
+  .card h2 { margin:0 0 10px; font-size:12px; color:var(--muted); font-weight:700; text-transform:uppercase; letter-spacing:.09em; }
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .row label { display:flex; gap:6px; align-items:center; font-size:14px; }
-  input[type=number] { width:70px; padding:5px 6px; border:1px solid var(--line); border-radius:6px; font:inherit; }
-  select { padding:5px 6px; border:1px solid var(--line); border-radius:6px; font:inherit; }
-  canvas { width:100%; height:240px; display:block; }
-  .legend { display:flex; gap:14px; font-size:13px; color:var(--muted); margin-top:4px; }
-  .legend i { display:inline-block; width:12px; height:3px; margin-right:5px; vertical-align:middle; }
-  .vals { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; text-align:center; margin-top:6px; }
-  .vals div { background:var(--bg); border-radius:8px; padding:6px; font-size:12px; color:var(--muted); }
-  .vals b { display:block; font-size:19px; color:var(--ink); font-variant-numeric:tabular-nums; }
-  #log { height:130px; overflow:auto; font:12.5px ui-monospace, Menlo, Consolas, monospace; background:#0f1722; color:#d6e2f0; border-radius:8px; padding:8px; }
-  #log .err { color:#ff8b8b; } #log .info { color:#9ec1ff; }
-  #msg { min-height:20px; font-size:14px; }
-  #msg.err { color:var(--bad); }
-  input[type=range] { width:100%; }
+  input[type=number], select { padding:5px 8px; border:1px solid var(--line); border-radius:8px; font:inherit; background:var(--field); color:var(--ink); }
+  input[type=number] { width:72px; }
   .hint { font-size:12.5px; color:var(--muted); }
-  .seg { display:inline-flex; } .seg button { border-radius:0; padding:5px 14px; background:#2c3a4a; color:#fff; border-color:#3a4a5c; }
-  .seg button:first-child { border-radius:8px 0 0 8px; } .seg button:last-child { border-radius:0 8px 8px 0; }
-  .seg button.on { background:var(--brand); border-color:var(--brand); }
-  #pidPanel { position:absolute; inset:0; overflow:auto; background:var(--bg); padding:22px; }
-  .pidwrap { max-width:640px; margin:0 auto; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px 22px; }
-  .pidwrap h2 { margin:0 0 6px; font-size:18px; }
-  .ctl { display:grid; grid-template-columns:190px 1fr 96px; gap:12px; align-items:center; margin:16px 0; }
-  .ctl label { font-weight:600; } .ctl small { display:block; font-weight:400; color:var(--muted); font-size:12px; }
-  .ctl .numv { width:92px; font:600 18px ui-monospace, Consolas, monospace; text-align:right; padding:4px 6px; border:1px solid var(--line); border-radius:6px; }
-  .ctl input[type=range] { height:28px; }
+  input[type=range] { width:100%; accent-color:var(--brand); }
+
+  /* ---------- pulsanti avvia / stop ---------- */
+  .runbar { display:flex; gap:10px; }
+  button.go, button.stop { flex:1; font-weight:700; font-size:16px; padding:12px 18px; border-radius:14px; border:0; color:#fff; letter-spacing:.02em; }
+  button.go { background:linear-gradient(135deg,#22c55e,#15803d); box-shadow:0 6px 16px rgba(22,163,74,.35); }
+  button.stop { background:linear-gradient(135deg,#f87171,#b91c1c); box-shadow:0 6px 16px rgba(220,38,38,.32); }
+  button.go:hover { background:linear-gradient(135deg,#34d399,#16a34a); } button.stop:hover { background:linear-gradient(135deg,#fb7185,#dc2626); }
+  button.go:disabled, button.stop:disabled { box-shadow:none; filter:grayscale(.5); }
+  #msg { min-height:20px; font-size:14px; } #msg.err { color:var(--bad); font-weight:600; }
+
+  /* ---------- tile dei valori ---------- */
+  .tiles { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+  .tile { background:var(--bg); border-radius:12px; padding:9px 12px 8px; border-top:3px solid var(--c, var(--line)); }
+  .tile span { font-size:11.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.07em; font-weight:600; }
+  .tile b { display:block; font:700 30px/1.15 ui-monospace, "Cascadia Mono", Consolas, monospace; font-variant-numeric:tabular-nums; }
+  .tile em { font-style:normal; }
+  .tile i { font-style:normal; font-size:12px; color:var(--muted); margin-left:4px; }
+  .plotbox { position:relative; }
+  .plotbox canvas { position:absolute; inset:0; width:100%; height:100%; display:block; }
+  .toolbar { display:flex; align-items:center; gap:14px; margin:12px 0 8px; flex-wrap:wrap; }
+  .legend { display:flex; gap:16px; font-size:13px; color:var(--muted); flex:1; flex-wrap:wrap; }
+  .legend i { display:inline-block; width:14px; height:4px; border-radius:2px; margin-right:6px; vertical-align:middle; }
+  .winsel { display:inline-flex; background:var(--bg); border-radius:10px; padding:2px; }
+  .winsel button { border:0; background:transparent; padding:3px 11px; border-radius:8px; font-size:12.5px; color:var(--muted); }
+  .winsel button.on { background:var(--panel); color:var(--ink); font-weight:600; box-shadow:0 1px 4px rgba(15,23,42,.18); }
+
+  /* ---------- modalità PID ---------- */
+  #pidPanel { position:absolute; inset:0; padding:16px; display:flex; flex-direction:column; gap:14px; overflow:auto; background:var(--bg); }
+  #chartSlot { flex:1; min-height:340px; display:flex; flex-direction:column; }
+  #chartSlot .chartCard { flex:1; display:flex; flex-direction:column; min-height:0; }
+  #chartSlot .plotbox { flex:1; min-height:230px; }
+  .ctlgrid { display:grid; grid-template-columns:1fr 1fr; gap:6px 28px; }
+  .ctl { display:grid; grid-template-columns:1fr auto; gap:2px 10px; align-items:center; padding:6px 0; }
+  .ctl label { font-weight:700; display:flex; align-items:baseline; gap:8px; }
+  .ctl label small { font-weight:400; color:var(--muted); font-size:12px; }
+  .ctl .dot { width:10px; height:10px; border-radius:50%; background:var(--c); display:inline-block; }
+  .ctl .num { display:flex; align-items:center; gap:4px; }
+  .ctl .numv { width:96px; font:700 18px ui-monospace, "Cascadia Mono", Consolas, monospace; text-align:right; padding:3px 8px; }
+  .ctl .step { padding:0; width:30px; height:30px; border-radius:50%; font-size:18px; line-height:1; }
+  .ctl input[type=range] { grid-column:1 / -1; -webkit-appearance:none; appearance:none; height:8px; margin:9px 0; border-radius:6px; outline:none; cursor:pointer;
+    background:linear-gradient(to right, var(--c) var(--fill,0%), var(--line) var(--fill,0%)); }
+  .ctl input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:22px; height:22px; border-radius:50%; background:#fff; border:3px solid var(--c); box-shadow:0 2px 6px rgba(0,0,0,.35); }
+  .ctl input[type=range]::-moz-range-thumb { width:16px; height:16px; border-radius:50%; background:#fff; border:3px solid var(--c); box-shadow:0 2px 6px rgba(0,0,0,.35); }
+  .ctl input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow:0 0 0 4px color-mix(in srgb, var(--c) 35%, transparent); }
+  .pidactions { display:flex; gap:10px; margin-top:10px; align-items:center; }
+  .pidactions .hint { flex:1; }
+  .pidactions button { flex:none; min-width:170px; }
+
+  /* ---------- aside (blocchi) ---------- */
+  aside > * { flex:none; }
+  #asideChartSlot .legend { display:none; } #asideChartSlot .toolbar { justify-content:flex-end; margin:8px 0 6px; }
+  aside .tiles { grid-template-columns:repeat(2,1fr); } aside .tile b { font-size:22px; }
+  #asideChartSlot .plotbox { height:230px; }
+  #log { height:130px; overflow:auto; font:12.5px ui-monospace, Menlo, Consolas, monospace; background:#0b1220; color:#d6e2f0; border-radius:10px; padding:8px; }
+  #log .err { color:#ff8b8b; } #log .info { color:#9ec1ff; }
+  #beamView { width:100%; height:120px; display:block; }
   .blocklyHighlighted > .blocklyPath { stroke:#facc15 !important; stroke-width:5px !important; }
-  [hidden] { display:none !important; }
+  @media (max-width: 1100px) { main { grid-template-columns:1fr; } aside { border-left:0; border-top:1px solid var(--line); } .tiles { grid-template-columns:repeat(2,1fr); } .ctlgrid { grid-template-columns:1fr; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>⚖️ Ball &amp; Beam a blocchi</h1>
+  <div class="logo">
+    <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true"><g transform="rotate(-8 17 20)"><rect x="2" y="19" width="30" height="4.5" rx="2.2" fill="#e2e8f0"/><circle cx="23" cy="14.5" r="5" fill="#60a5fa"/><circle cx="21.6" cy="13" r="1.6" fill="#dbeafe"/></g><path d="M17 24 L11 32 H23 Z" fill="#c4b5fd"/></svg>
+    <div><b>Ball &amp; Beam</b><small>laboratorio di controllo</small></div>
+  </div>
   <span class="seg"><button id="modePid">PID</button><button id="modeBlk">Blocchi</button></span>
   <label id="levelWrap" style="font-size:13px" hidden>Livello
-    <select id="level" style="margin-left:4px">
+    <select id="level">
       <option value="1">1 · Primi passi</option>
       <option value="2">2 · Logica</option>
       <option value="3" selected>3 · Controllo PID</option>
     </select>
   </label>
-  <span id="sensorBadge" class="badge">sensore ?</span>
-  <span id="connBadge" class="badge">non connesso</span>
-  <button id="btnSim" title="Prova i programmi senza ESP32: palla e trave virtuali">🧪 Simulazione</button>
+  <span id="sensorBadge" class="chip">sensore ?</span>
+  <span id="connBadge" class="chip">non connesso</span>
+  <button id="btnSim" title="Prova senza ESP32: palla e trave virtuali">🧪 Simulazione</button>
   <button id="btnWifi" title="Collegati alla scheda via Wi-Fi">📶 Wi-Fi</button>
   <button id="btnConnect" class="primary">Connetti USB</button>
 </header>
@@ -76,55 +137,74 @@
   <div id="work">
     <div id="blocklyDiv"></div>
     <div id="pidPanel">
-      <div class="pidwrap">
-        <h2>Regolatore PID</h2>
-        <p class="hint">Il controllo gira sull'ESP32 ad alta frequenza. Qui cambi solo i parametri: la pagina li manda alla scheda circa 10 volte al secondo, anche mentre il PID è in funzione.</p>
-        <div class="ctl"><label>Obiettivo<small>dove portare la palla (cm dal sensore)</small></label><input type="range" id="sSp" min="0" max="70" step="0.5" value="20"><input type="number" class="numv" id="oSp" step="0.5" min="0"></div>
-        <div class="ctl"><label>P · Kp<small>quanto spinge in base alla distanza dall'obiettivo</small></label><input type="range" id="sKp" min="0" max="10" step="0.01" value="1"><input type="number" class="numv" id="oKp" step="0.01" min="0"></div>
-        <div class="ctl"><label>I · Ki<small>corregge l'errore che resta a lungo (da usare poco)</small></label><input type="range" id="sKi" min="0" max="1" step="0.001" value="0"><input type="number" class="numv" id="oKi" step="0.001" min="0"></div>
-        <div class="ctl"><label>D · Kd<small>frena la palla quando corre verso l'obiettivo</small></label><input type="range" id="sKd" min="0" max="0.5" step="0.001" value="0.05"><input type="number" class="numv" id="oKd" step="0.001" min="0"></div>
-        <div class="row" style="margin-top:14px">
+      <div id="chartSlot">
+        <div class="card chartCard" id="chartCard">
+          <div class="tiles">
+            <div class="tile" style="--c:var(--pos)"><span>Posizione</span><b><em id="vPos">–</em><i>cm</i></b></div>
+            <div class="tile" style="--c:var(--sp)"><span>Obiettivo</span><b><em id="vSp">–</em><i>cm</i></b></div>
+            <div class="tile" style="--c:var(--err)"><span>Errore</span><b><em id="vErr">–</em><i>cm</i></b></div>
+            <div class="tile" style="--c:var(--ang)"><span>Angolo trave</span><b><em id="vAng">–</em><i>°</i></b></div>
+          </div>
+          <div class="toolbar">
+            <div class="legend">
+              <span><i style="background:var(--pos)"></i>posizione</span>
+              <span><i style="background:var(--sp)"></i>obiettivo</span>
+              <span><i style="background:var(--ang)"></i>angolo trave</span>
+            </div>
+            <div class="winsel" id="winsel"><button data-w="10">10 s</button><button data-w="30">30 s</button><button data-w="60">60 s</button></div>
+          </div>
+          <div class="plotbox"><canvas id="chart"></canvas></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Regolatore PID — il controllo gira sull'ESP32, qui cambi solo i parametri</h2>
+        <div class="ctlgrid">
+          <div class="ctl" style="--c:var(--sp)"><label><span class="dot"></span>Obiettivo <small>cm dal sensore</small></label>
+            <div class="num"><button class="step" data-t="sSp" data-d="-1">−</button><input type="number" class="numv" id="oSp" step="0.5" min="0"><button class="step" data-t="sSp" data-d="1">+</button></div>
+            <input type="range" id="sSp" min="0" max="70" step="0.5" value="20"></div>
+          <div class="ctl" style="--c:var(--pos)"><label><span class="dot"></span>P · Kp <small>quanto spinge</small></label>
+            <div class="num"><button class="step" data-t="sKp" data-d="-1">−</button><input type="number" class="numv" id="oKp" step="0.01" min="0"><button class="step" data-t="sKp" data-d="1">+</button></div>
+            <input type="range" id="sKp" min="0" max="10" step="0.01" value="1"></div>
+          <div class="ctl" style="--c:var(--err)"><label><span class="dot"></span>I · Ki <small>corregge l'errore che resta</small></label>
+            <div class="num"><button class="step" data-t="sKi" data-d="-1">−</button><input type="number" class="numv" id="oKi" step="0.001" min="0"><button class="step" data-t="sKi" data-d="1">+</button></div>
+            <input type="range" id="sKi" min="0" max="1" step="0.001" value="0"></div>
+          <div class="ctl" style="--c:var(--ang)"><label><span class="dot"></span>D · Kd <small>frena la palla</small></label>
+            <div class="num"><button class="step" data-t="sKd" data-d="-1">−</button><input type="number" class="numv" id="oKd" step="0.001" min="0"><button class="step" data-t="sKd" data-d="1">+</button></div>
+            <input type="range" id="sKd" min="0" max="0.5" step="0.001" value="0.05"></div>
+        </div>
+        <div class="pidactions">
           <button id="pidRun" class="go" disabled>▶ AVVIA PID</button>
           <button id="pidStop" class="stop" disabled>■ STOP</button>
+          <span class="hint">Parti con I = 0 e D basso: se la palla oscilla aumenta D o diminuisci P; se è pigra aumenta P. Scorciatoia: <b>Esc</b> o <b>Spazio</b> = STOP.</span>
         </div>
-        <p class="hint">Puoi scrivere i valori esatti nelle caselle a destra (anche oltre il fondo scala dello slider).</p>
-        <p class="hint">Consiglio: parti con I = 0 e D basso. Se la palla oscilla aumenta D o diminuisci P; se è pigra aumenta P. L'angolo massimo della trave è il “Limite ±” della calibrazione.</p>
       </div>
     </div>
   </div>
   <aside>
-    <div class="row">
+    <div class="runbar">
       <button id="btnRun" class="go" disabled>▶ AVVIA</button>
       <button id="btnStop" class="stop" disabled>■ STOP</button>
     </div>
     <div id="msg"></div>
 
+    <div id="asideChartSlot"></div>
+
     <div class="card">
-      <h2>Palla in tempo reale</h2>
-      <canvas id="chart"></canvas>
-      <div class="legend">
-        <span><i style="background:var(--pos)"></i>posizione</span>
-        <span><i style="background:var(--sp)"></i>obiettivo</span>
-        <span><i style="background:var(--ang)"></i>angolo trave</span>
-      </div>
-      <div class="vals">
-        <div>Posizione<b id="vPos">–</b>cm</div>
-        <div>Obiettivo<b id="vSp">–</b>cm</div>
-        <div>Angolo<b id="vAng">–</b>gradi</div>
-      </div>
+      <h2>La trave</h2>
+      <canvas id="beamView"></canvas>
     </div>
 
     <div class="card" id="simCard" hidden>
       <h2>Simulazione</h2>
-      <canvas id="simView" style="height:90px"></canvas>
-      <div class="row" style="margin-top:6px">
+      <div class="row">
         <label style="flex:1">Palla <input type="range" id="simBall" min="0" max="100" value="50"></label>
       </div>
-      <div class="row" style="margin-top:4px">
+      <div class="row" style="margin-top:6px">
         <label><input type="checkbox" id="simMount"> servo montato al contrario</label>
         <label><input type="checkbox" id="simGone"> palla fuori portata</label>
       </div>
-      <div class="hint">Come un vero ball &amp; beam, ma virtuale. Prova a spuntare “servo montato al contrario” e poi correggi con “inverti verso” nella calibrazione.</div>
+      <div class="hint" style="margin-top:6px">Come un vero ball &amp; beam, ma virtuale. Prova “servo montato al contrario” e correggi con “inverti verso” nella calibrazione.</div>
     </div>
 
     <div class="card">
@@ -4381,12 +4461,12 @@ function logLine(text, cls) {
 }
 function say(text, isErr) { const m = $("msg"); m.textContent = text || ""; m.className = isErr ? "err" : ""; }
 function refreshUi() {
-  $("connBadge").textContent = connected ? (sim ? "simulazione" : wsock ? "Wi-Fi" : "connesso") : "non connesso"; $("connBadge").className = "badge " + (connected ? "ok" : "");
+  $("connBadge").textContent = connected ? (sim ? "simulazione" : wsock ? "Wi-Fi" : "connesso") : "non connesso"; $("connBadge").className = "chip " + (connected ? "ok" : "");
   $("btnSim").textContent = sim ? "Esci dalla simulazione" : "🧪 Simulazione"; $("btnSim").disabled = connected && !sim; $("btnConnect").disabled = !!sim || !!wsock && !served;
   $("btnWifi").hidden = served; $("btnWifi").textContent = wsock ? "Disconnetti Wi-Fi" : "📶 Wi-Fi"; $("btnWifi").disabled = !!sim || (connected && !wsock);
   $("simCard").hidden = !sim;
   $("sensorBadge").textContent = connected ? (sensorOk ? "sensore OK" : "palla non vista") : "sensore ?";
-  $("sensorBadge").className = "badge " + (connected ? (sensorOk ? "ok" : "bad") : "");
+  $("sensorBadge").className = "chip " + (connected ? (sensorOk ? "ok" : "bad") : "");
   $("btnConnect").textContent = connected ? "Disconnetti" : (served ? "Connetti" : "Connetti USB");
   $("btnRun").disabled = !connected || running; $("btnStop").disabled = !connected;
   $("pidRun").disabled = !connected || running; $("pidStop").disabled = !connected;
@@ -4509,7 +4589,8 @@ function handleLine(line) {
   if (o.x === undefined) return;
   sensorOk = !!o.ok; const wasRunning = running; running = !!o.run;
   if (wasRunning !== running || $("sensorBadge").textContent !== (sensorOk ? "sensore OK" : "palla non vista")) refreshUi();
-  hist.push({ t:o.t, x:+o.x, sp:+o.sp, a:+o.a, pid:o.pid, ok:o.ok }); if (hist.length > 220) hist.shift();
+  hist.push({ t:o.t, x:+o.x, sp:+o.sp, a:+o.a, pid:o.pid, ok:o.ok }); if (hist.length > 1400) hist.shift();
+  $("vErr").textContent = (o.pid && o.ok) ? (+o.sp - +o.x).toFixed(1) : "–";
   $("vPos").textContent = o.ok ? (+o.x).toFixed(1) : "–"; $("vSp").textContent = o.pid ? (+o.sp).toFixed(1) : "–"; $("vAng").textContent = (+o.a).toFixed(1);
   lastSp = o.pid ? +o.sp : null;
   highlight(running && o.s !== undefined ? blockIds[o.s] : null);
@@ -4525,52 +4606,150 @@ let hlId = null, runStart = 0, runUsesServo = false;
 let mode = "pid", pidOn = false, pidDirty = false, pidStartedAt = 0;
 function highlight(id) { id = id || null; if (id === hlId) return; hlId = id; try { ws.highlightBlock(id); } catch (e) {} }
 
-// ---------------- grafico ----------------
+// ---------------- grafico grande ----------------
+let chartWin = 30;                                         // secondi visibili
+try { chartWin = +localStorage.getItem("bb_win") || 30; } catch (e) {}
+function setWin(w) { chartWin = w; try { localStorage.setItem("bb_win", w); } catch (e) {} for (const b of $("winsel").children) b.classList.toggle("on", +b.dataset.w === w); }
+$("winsel").onclick = (e) => { if (e.target.dataset && e.target.dataset.w) setWin(+e.target.dataset.w); };
+setWin(chartWin);
 const cv = $("chart"), cx = cv.getContext("2d");
+const cssv = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function rgba(c, a) { const m = /^#([0-9a-f]{6})$/i.exec(c); if (!m) return c; const n = parseInt(m[1], 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; }
+function fitCanvas(c) {
+  const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  if (w < 10 || h < 10) return null;
+  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+  const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  return { g, w, h };
+}
+function roundRect(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+const niceStep = (v) => [1, 2, 5, 10, 20, 25, 50].find((s) => s >= v) || 100;
+
 function drawChart() {
-  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
-  if (cv.width !== w * dpr || cv.height !== h * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
-  cx.setTransform(dpr, 0, 0, dpr, 0, 0); cx.clearRect(0, 0, w, h);
+  const f = fitCanvas(cv); if (!f) return;
+  const { g, w, h } = f;
+  const C = { pos:cssv("--pos"), sp:cssv("--sp"), ang:cssv("--ang"), plot:cssv("--plot"), grid:cssv("--grid"), axis:cssv("--axis"), ink:cssv("--ink"), bad:cssv("--bad") };
   let len = Math.max(10, +$("cLen").value || 70);
-  for (const p of hist) if (p.ok && p.x > len) len = Math.ceil(p.x / 10) * 10;       // la posizione non viene mai tagliata
+  for (const p of hist) if (p.ok && p.x > len) len = Math.ceil(p.x / 10) * 10;
   const lim = Math.max(1, +$("cLimit").value || 20);
-  const padL = 34, padR = 6, topH = h * 0.62, gap = 14, botY = topH + gap, botH = h - botY - 4;
-  const style = getComputedStyle(document.documentElement);
-  const col = (n) => style.getPropertyValue(n).trim();
-  cx.font = "11px system-ui"; cx.fillStyle = "#6b7785"; cx.strokeStyle = "#e3e8ee"; cx.lineWidth = 1;
-  const yP = (v) => 6 + (topH - 12) * (1 - Math.min(Math.max(v, 0), len) / len);
-  for (let i = 0; i <= 4; i++) { const v = len * i / 4, y = yP(v); cx.beginPath(); cx.moveTo(padL, y); cx.lineTo(w - padR, y); cx.stroke(); cx.fillText(v.toFixed(0), 4, y + 4); }
-  const yA = (v) => botY + botH * (1 - (Math.min(Math.max(v, -lim), lim) + lim) / (2 * lim));
-  cx.beginPath(); cx.moveTo(padL, yA(0)); cx.lineTo(w - padR, yA(0)); cx.stroke(); cx.fillText("0°", 4, yA(0) + 4);
-  cx.fillText("+" + lim, 4, botY + 8); cx.fillText("−" + lim, 4, botY + botH);
-  if (hist.length < 2) return;
-  const t1 = hist[hist.length - 1].t, win = 10000, xT = (t) => padL + (w - padL - padR) * (1 - (t1 - t) / win);
-  const line = (key, color, yf, dash, valid) => {
-    cx.beginPath(); cx.strokeStyle = color; cx.lineWidth = 2; cx.setLineDash(dash || []); let pen = false;
-    for (const p of hist) { if (t1 - p.t > win || (valid && !valid(p))) { pen = false; continue; } const x = xT(p.t), y = yf(p[key]); if (!pen) { cx.moveTo(x, y); pen = true; } else cx.lineTo(x, y); }
-    cx.stroke(); cx.setLineDash([]);
-  };
-  line("sp", col("--sp"), yP, [6, 4], (p) => p.pid);
-  line("x", col("--pos"), yP, null, (p) => p.ok);
-  line("a", col("--ang"), yA);
+  const small = w < 520, padL = small ? 38 : 46, padR = small ? 60 : 66, padT = 12, padB = 26, gap = small ? 14 : 20;
+  const x0 = padL, x1 = w - padR, tY0 = padT, tY1 = padT + (h - padT - padB - gap) * 0.70, bY0 = tY1 + gap, bY1 = h - padB;
+  const yP = (v) => tY1 - (tY1 - tY0) * Math.min(Math.max(v, 0), len) / len;
+  const yA = (v) => bY1 - (bY1 - bY0) * (Math.min(Math.max(v, -lim), lim) + lim) / (2 * lim);
+  // sfondo dei due riquadri
+  g.fillStyle = C.plot; roundRect(g, x0, tY0, x1 - x0, tY1 - tY0, 10); g.fill(); roundRect(g, x0, bY0, x1 - x0, bY1 - bY0, 10); g.fill();
+  g.font = "11.5px system-ui, sans-serif"; g.textBaseline = "middle";
+  // griglia orizzontale (posizione)
+  const st = niceStep(len / 5); g.lineWidth = 1;
+  for (let v = 0; v <= len + 1e-6; v += st) { const y = yP(v); g.strokeStyle = C.grid; g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke(); g.fillStyle = C.axis; g.textAlign = "right"; g.fillText(v.toFixed(0), x0 - 8, y); }
+  g.save(); g.translate(12, (tY0 + tY1) / 2); g.rotate(-Math.PI / 2); g.textAlign = "center"; g.fillStyle = C.axis; g.fillText("cm", 0, 0); g.restore();
+  // angolo
+  for (const v of [-lim, 0, lim]) { const y = yA(v); g.strokeStyle = v === 0 ? C.axis : C.grid; g.setLineDash(v === 0 ? [4, 4] : []); g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke(); g.setLineDash([]); g.fillStyle = C.axis; g.textAlign = "right"; g.fillText((v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v) + "°", x0 - 8, y); }
+  const last = hist[hist.length - 1];
+  if (!last) {
+    g.fillStyle = C.axis; g.textAlign = "center"; g.font = "15px system-ui, sans-serif";
+    g.fillText(connected ? "In attesa dei dati dalla scheda…" : "Collegati alla scheda (USB o Wi-Fi) oppure prova la simulazione", (x0 + x1) / 2, (tY0 + tY1) / 2); return;
+  }
+  const win = chartWin * 1000, t1 = last.t, xT = (t) => x0 + (x1 - x0) * (1 - (t1 - t) / win);
+  // griglia verticale + tempo
+  const tick = chartWin <= 10 ? 1 : chartWin <= 30 ? 5 : 10; g.textAlign = "center";
+  for (let s = 0; s <= chartWin; s += tick) {
+    const x = x1 - (x1 - x0) * s / chartWin; g.strokeStyle = C.grid; g.beginPath(); g.moveTo(x, tY0); g.lineTo(x, tY1); g.moveTo(x, bY0); g.lineTo(x, bY1); g.stroke();
+    g.fillStyle = C.axis; g.fillText(s === 0 ? "ora" : "−" + s + " s", x, bY1 + 14);
+  }
+  g.save(); g.beginPath(); g.rect(x0, tY0 - 2, x1 - x0, bY1 - tY0 + 4); g.clip();
+  const vis = hist.filter((p) => t1 - p.t <= win);
+  // palla non vista
+  let s0 = null;
+  for (let i = 0; i <= vis.length; i++) {
+    const bad = i < vis.length && !vis[i].ok;
+    if (bad && s0 === null) s0 = vis[i].t; else if (!bad && s0 !== null) { const xa = xT(s0), xb = xT(vis[i - 1].t); g.fillStyle = rgba(C.bad, 0.13); g.fillRect(xa, tY0, Math.max(3, xb - xa), tY1 - tY0); s0 = null; }
+  }
+  // banda ±1.5 cm intorno all'obiettivo e linea obiettivo
+  const pv = vis.filter((p) => p.pid);
+  if (pv.length > 1) {
+    g.beginPath(); pv.forEach((p, i) => { const x = xT(p.t), y = yP(p.sp + 1.5); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+    for (let i = pv.length - 1; i >= 0; i--) g.lineTo(xT(pv[i].t), yP(pv[i].sp - 1.5));
+    g.closePath(); g.fillStyle = rgba(C.sp, 0.13); g.fill();
+    g.beginPath(); g.strokeStyle = C.sp; g.lineWidth = 2; g.setLineDash([9, 6]); let pen = false;
+    for (const p of vis) { if (!p.pid) { pen = false; continue; } const x = xT(p.t), y = yP(p.sp); if (!pen) { g.moveTo(x, y); pen = true; } else g.lineTo(x, y); }
+    g.stroke(); g.setLineDash([]);
+  }
+  // posizione: area + linea
+  const pts = vis.filter((p) => p.ok);
+  if (pts.length > 1) {
+    const grad = g.createLinearGradient(0, tY0, 0, tY1); grad.addColorStop(0, rgba(C.pos, 0.28)); grad.addColorStop(1, rgba(C.pos, 0));
+    g.beginPath(); pts.forEach((p, i) => { const x = xT(p.t), y = yP(p.x); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+    g.lineTo(xT(pts[pts.length - 1].t), tY1); g.lineTo(xT(pts[0].t), tY1); g.closePath(); g.fillStyle = grad; g.fill();
+    g.beginPath(); g.strokeStyle = C.pos; g.lineWidth = 2.6; g.lineJoin = "round"; let pen = false;
+    for (const p of vis) { if (!p.ok) { pen = false; continue; } const x = xT(p.t), y = yP(p.x); if (!pen) { g.moveTo(x, y); pen = true; } else g.lineTo(x, y); }
+    g.stroke();
+  }
+  // angolo
+  g.beginPath(); g.strokeStyle = C.ang; g.lineWidth = 2.2; g.lineJoin = "round";
+  vis.forEach((p, i) => { const x = xT(p.t), y = yA(p.a); i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.stroke();
+  g.restore();
+  // etichette in fondo alle linee
+  const tag = (txt, y, col) => { g.font = "600 12.5px ui-monospace, Consolas, monospace"; const tw = g.measureText(txt).width + 14; g.fillStyle = col; roundRect(g, x1 + 8, y - 11, tw, 22, 11); g.fill(); g.fillStyle = "#fff"; g.textAlign = "left"; g.fillText(txt, x1 + 15, y); };
+  if (last.ok) { const y = yP(last.x); g.fillStyle = C.pos; g.beginPath(); g.arc(x1, y, 5, 0, 7); g.fill(); g.strokeStyle = C.plot; g.lineWidth = 2; g.stroke(); tag(last.x.toFixed(1), y, C.pos); }
+  if (last.pid) tag("▸ " + last.sp.toFixed(1), Math.min(Math.max(yP(last.sp), tY0 + 11), tY1 - 11) + (last.ok && Math.abs(yP(last.sp) - yP(last.x)) < 24 ? (yP(last.sp) < yP(last.x) ? -13 : 13) : 0), C.sp);
+  g.fillStyle = C.ang; g.beginPath(); g.arc(x1, yA(last.a), 4.5, 0, 7); g.fill(); tag(last.a.toFixed(1) + "°", yA(last.a), C.ang);
+  if (!last.ok) { g.fillStyle = C.bad; g.font = "600 13px system-ui, sans-serif"; g.textAlign = "left"; g.fillText("palla non vista", x0 + 12, tY0 + 16); }
 }
-// ---------------- vista della simulazione ----------------
-const sv = $("simView"), sx = sv.getContext("2d");
-function drawSim() {
-  if (!sim) return;
-  const dpr = window.devicePixelRatio || 1, w = sv.clientWidth, h = sv.clientHeight;
-  if (sv.width !== w * dpr || sv.height !== h * dpr) { sv.width = w * dpr; sv.height = h * dpr; }
-  sx.setTransform(dpr, 0, 0, dpr, 0, 0); sx.clearRect(0, 0, w, h);
-  const v = sim.view(), L = w - 40, cxm = w / 2, cy = h * 0.55, th = v.theta * Math.PI / 180;
-  sx.fillStyle = "#94a3b8"; sx.beginPath(); sx.moveTo(cxm, cy + 4); sx.lineTo(cxm - 12, h - 4); sx.lineTo(cxm + 12, h - 4); sx.fill();
-  sx.save(); sx.translate(cxm, cy); sx.rotate(th);
-  sx.fillStyle = "#475569"; sx.fillRect(-L / 2, 0, L, 6);
-  sx.fillStyle = "#16202c"; sx.fillRect(-L / 2 - 6, -8, 6, 14);                 // il sensore è a sinistra (posizione 0)
-  const bx = -L / 2 + (v.x / v.length) * L;
-  sx.fillStyle = "#2563eb"; sx.beginPath(); sx.arc(bx, -9, 9, 0, 7); sx.fill();
-  sx.restore();
+
+// ---------------- vista animata della trave ----------------
+const bv = $("beamView");
+function drawBeam() {
+  const f = fitCanvas(bv); if (!f) return;
+  const { g, w, h } = f, last = hist[hist.length - 1];
+  const C = { pos:cssv("--pos"), sp:cssv("--sp"), ink:cssv("--ink"), muted:cssv("--muted"), axis:cssv("--axis") };
+  let theta = 0, x = null, len = Math.max(10, +$("cLen").value || 70), sp = null;
+  if (sim) { const v = sim.view(); theta = v.theta; x = v.x; len = v.length; if (last && last.pid) sp = last.sp; }
+  else if (connected && last) { theta = last.a; x = last.ok ? last.x : null; sp = last.pid ? last.sp : null; if (x !== null && x > len) len = x; }
+  const L = w - 70, cxm = w / 2 + 10, cy = h * 0.5, th = Math.max(-35, Math.min(35, theta * 2)) * Math.PI / 180, k = (v) => -L / 2 + (v / len) * L;
+  // supporto
+  const sg = g.createLinearGradient(0, cy, 0, h); sg.addColorStop(0, "#a5b4fc"); sg.addColorStop(1, "#6366f1");
+  g.fillStyle = sg; g.beginPath(); g.moveTo(cxm, cy + 6); g.lineTo(cxm - 16, h - 8); g.lineTo(cxm + 16, h - 8); g.closePath(); g.fill();
+  g.fillStyle = C.axis; g.globalAlpha = 0.4; roundRect(g, cxm - 60, h - 9, 120, 5, 2.5); g.fill(); g.globalAlpha = 1;
+  g.save(); g.translate(cxm, cy); g.rotate(th);
+  // trave
+  const bg = g.createLinearGradient(0, 0, 0, 10); bg.addColorStop(0, "#e2e8f0"); bg.addColorStop(1, "#94a3b8");
+  g.fillStyle = bg; roundRect(g, -L / 2, 0, L, 10, 5); g.fill();
+  g.strokeStyle = "rgba(15,23,42,.45)"; g.lineWidth = 1; g.font = "10px system-ui"; g.textAlign = "center"; g.fillStyle = "rgba(15,23,42,.65)"; g.textBaseline = "alphabetic";
+  const ts = len > 100 ? 20 : 10;
+  for (let v = 0; v <= len; v += ts) { g.beginPath(); g.moveTo(k(v), 0); g.lineTo(k(v), 4); g.stroke(); g.fillText(v, k(v), 17); }
+  // sensore (posizione 0)
+  const sgr = g.createLinearGradient(0, -16, 0, 6); sgr.addColorStop(0, "#334155"); sgr.addColorStop(1, "#0f172a");
+  g.fillStyle = sgr; roundRect(g, -L / 2 - 16, -17, 16, 26, 4); g.fill(); g.fillStyle = "#38bdf8"; g.beginPath(); g.arc(-L / 2 - 4, -6, 3, 0, 7); g.fill();
+  if (x !== null) {
+    g.strokeStyle = rgba(C.pos, 0.35); g.setLineDash([4, 4]); g.beginPath(); g.moveTo(-L / 2 - 4, -6); g.lineTo(k(x) - 10, -14); g.stroke(); g.setLineDash([]);
+  }
+  if (sp !== null) {                                       // bandierina dell'obiettivo
+    g.strokeStyle = C.sp; g.lineWidth = 2; g.beginPath(); g.moveTo(k(sp), 0); g.lineTo(k(sp), -34); g.stroke();
+    g.fillStyle = C.sp; g.beginPath(); g.moveTo(k(sp), -34); g.lineTo(k(sp) + 14, -29); g.lineTo(k(sp), -24); g.closePath(); g.fill();
+  }
+  if (x !== null) {                                        // palla
+    const bx = k(x), r = 11;
+    g.fillStyle = "rgba(0,0,0,.22)"; g.beginPath(); g.ellipse(bx + 2, 1, r * 0.9, 3, 0, 0, 7); g.fill();
+    const rg = g.createRadialGradient(bx - 4, -r - 4, 2, bx, -r, r + 2); rg.addColorStop(0, "#bfdbfe"); rg.addColorStop(0.45, C.pos); rg.addColorStop(1, "#1e3a8a");
+    g.fillStyle = rg; g.beginPath(); g.arc(bx, -r, r, 0, 7); g.fill();
+  }
+  g.restore();
+  g.fillStyle = C.muted; g.font = "11px system-ui"; g.textAlign = "left"; g.textBaseline = "alphabetic";
+  g.fillText(!connected ? "Collegati o avvia la simulazione" : x === null ? "palla non vista dal sensore" : "inclinazione ingrandita ×2", 10, h - 8);
 }
-(function loop() { drawChart(); drawSim(); requestAnimationFrame(loop); })();
+(function loop() { drawChart(); drawBeam(); requestAnimationFrame(loop); })();
+
+// ---------------- pulsanti −/+ , scorciatoie ----------------
+for (const b of document.querySelectorAll(".step")) b.onclick = () => {
+  const sl = $(b.dataset.t), st = +sl.step || 1;
+  let v = Math.max(+sl.min, Math.round((+sl.value + (+b.dataset.d) * st) / st) * st); v = +v.toFixed(6);
+  if (v > +sl.max) sl.max = v; sl.value = v; sl.oninput();
+};
+window.addEventListener("keydown", (e) => {                // Esc (o Spazio in modalità PID) = STOP
+  if (!connected || /INPUT|SELECT|TEXTAREA/.test((document.activeElement || {}).tagName || "")) return;
+  if (e.key === "Escape" || (e.key === " " && mode === "pid")) { e.preventDefault(); stopPid(); }
+});
 
 // =====================================================================
 //  AZIONI
@@ -4608,8 +4787,10 @@ const pidVals = () => ({ sp:+$("sSp").value, kp:+$("sKp").value, ki:+$("sKi").va
 const PIDF = { sSp:["oSp", 1], sKp:["oKp", 2], sKi:["oKi", 3], sKd:["oKd", 3] };   // slider -> [casella numerica, decimali]
 function pidShow() {
   for (const [sl, [num, dec]] of Object.entries(PIDF)) if (document.activeElement !== $(num)) $(num).value = (+$(sl).value).toFixed(dec);
+  fillSliders();
 }
-function pidChanged() { pidDirty = true; try { localStorage.setItem("bb_pid", JSON.stringify(pidVals())); } catch (e) {} }
+function fillSliders() { for (const sl of Object.keys(PIDF)) { const e = $(sl), p = (+e.value - +e.min) / ((+e.max - +e.min) || 1) * 100; e.style.setProperty("--fill", Math.max(0, Math.min(100, p)) + "%"); } }
+function pidChanged() { fillSliders(); pidDirty = true; try { localStorage.setItem("bb_pid", JSON.stringify(pidVals())); } catch (e) {} }
 for (const [sl, [num]] of Object.entries(PIDF)) {
   $(sl).oninput = () => { pidShow(); pidChanged(); };
   $(num).oninput = () => {                                 // valore scritto a mano: allarga lo slider se serve
@@ -4643,6 +4824,7 @@ function setMode(m) {
   mode = m;
   $("pidPanel").hidden = m !== "pid"; $("blocklyDiv").hidden = m === "pid"; $("levelWrap").hidden = m === "pid"; $("progCard").hidden = m === "pid";
   $("modePid").classList.toggle("on", m === "pid"); $("modeBlk").classList.toggle("on", m !== "pid");
+  (m === "pid" ? $("chartSlot") : $("asideChartSlot")).appendChild($("chartCard"));
   try { localStorage.setItem("bb_mode", m); } catch (e) {}
   if (m !== "pid") setTimeout(() => Blockly.svgResize(ws), 0);
   say("");

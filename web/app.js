@@ -266,12 +266,12 @@ function logLine(text, cls) {
 }
 function say(text, isErr) { const m = $("msg"); m.textContent = text || ""; m.className = isErr ? "err" : ""; }
 function refreshUi() {
-  $("connBadge").textContent = connected ? (sim ? "simulazione" : wsock ? "Wi-Fi" : "connesso") : "non connesso"; $("connBadge").className = "badge " + (connected ? "ok" : "");
+  $("connBadge").textContent = connected ? (sim ? "simulazione" : wsock ? "Wi-Fi" : "connesso") : "non connesso"; $("connBadge").className = "chip " + (connected ? "ok" : "");
   $("btnSim").textContent = sim ? "Esci dalla simulazione" : "🧪 Simulazione"; $("btnSim").disabled = connected && !sim; $("btnConnect").disabled = !!sim || !!wsock && !served;
   $("btnWifi").hidden = served; $("btnWifi").textContent = wsock ? "Disconnetti Wi-Fi" : "📶 Wi-Fi"; $("btnWifi").disabled = !!sim || (connected && !wsock);
   $("simCard").hidden = !sim;
   $("sensorBadge").textContent = connected ? (sensorOk ? "sensore OK" : "palla non vista") : "sensore ?";
-  $("sensorBadge").className = "badge " + (connected ? (sensorOk ? "ok" : "bad") : "");
+  $("sensorBadge").className = "chip " + (connected ? (sensorOk ? "ok" : "bad") : "");
   $("btnConnect").textContent = connected ? "Disconnetti" : (served ? "Connetti" : "Connetti USB");
   $("btnRun").disabled = !connected || running; $("btnStop").disabled = !connected;
   $("pidRun").disabled = !connected || running; $("pidStop").disabled = !connected;
@@ -394,7 +394,8 @@ function handleLine(line) {
   if (o.x === undefined) return;
   sensorOk = !!o.ok; const wasRunning = running; running = !!o.run;
   if (wasRunning !== running || $("sensorBadge").textContent !== (sensorOk ? "sensore OK" : "palla non vista")) refreshUi();
-  hist.push({ t:o.t, x:+o.x, sp:+o.sp, a:+o.a, pid:o.pid, ok:o.ok }); if (hist.length > 220) hist.shift();
+  hist.push({ t:o.t, x:+o.x, sp:+o.sp, a:+o.a, pid:o.pid, ok:o.ok }); if (hist.length > 1400) hist.shift();
+  $("vErr").textContent = (o.pid && o.ok) ? (+o.sp - +o.x).toFixed(1) : "–";
   $("vPos").textContent = o.ok ? (+o.x).toFixed(1) : "–"; $("vSp").textContent = o.pid ? (+o.sp).toFixed(1) : "–"; $("vAng").textContent = (+o.a).toFixed(1);
   lastSp = o.pid ? +o.sp : null;
   highlight(running && o.s !== undefined ? blockIds[o.s] : null);
@@ -410,52 +411,150 @@ let hlId = null, runStart = 0, runUsesServo = false;
 let mode = "pid", pidOn = false, pidDirty = false, pidStartedAt = 0;
 function highlight(id) { id = id || null; if (id === hlId) return; hlId = id; try { ws.highlightBlock(id); } catch (e) {} }
 
-// ---------------- grafico ----------------
+// ---------------- grafico grande ----------------
+let chartWin = 30;                                         // secondi visibili
+try { chartWin = +localStorage.getItem("bb_win") || 30; } catch (e) {}
+function setWin(w) { chartWin = w; try { localStorage.setItem("bb_win", w); } catch (e) {} for (const b of $("winsel").children) b.classList.toggle("on", +b.dataset.w === w); }
+$("winsel").onclick = (e) => { if (e.target.dataset && e.target.dataset.w) setWin(+e.target.dataset.w); };
+setWin(chartWin);
 const cv = $("chart"), cx = cv.getContext("2d");
+const cssv = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function rgba(c, a) { const m = /^#([0-9a-f]{6})$/i.exec(c); if (!m) return c; const n = parseInt(m[1], 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; }
+function fitCanvas(c) {
+  const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  if (w < 10 || h < 10) return null;
+  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+  const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  return { g, w, h };
+}
+function roundRect(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+const niceStep = (v) => [1, 2, 5, 10, 20, 25, 50].find((s) => s >= v) || 100;
+
 function drawChart() {
-  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
-  if (cv.width !== w * dpr || cv.height !== h * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
-  cx.setTransform(dpr, 0, 0, dpr, 0, 0); cx.clearRect(0, 0, w, h);
+  const f = fitCanvas(cv); if (!f) return;
+  const { g, w, h } = f;
+  const C = { pos:cssv("--pos"), sp:cssv("--sp"), ang:cssv("--ang"), plot:cssv("--plot"), grid:cssv("--grid"), axis:cssv("--axis"), ink:cssv("--ink"), bad:cssv("--bad") };
   let len = Math.max(10, +$("cLen").value || 70);
-  for (const p of hist) if (p.ok && p.x > len) len = Math.ceil(p.x / 10) * 10;       // la posizione non viene mai tagliata
+  for (const p of hist) if (p.ok && p.x > len) len = Math.ceil(p.x / 10) * 10;
   const lim = Math.max(1, +$("cLimit").value || 20);
-  const padL = 34, padR = 6, topH = h * 0.62, gap = 14, botY = topH + gap, botH = h - botY - 4;
-  const style = getComputedStyle(document.documentElement);
-  const col = (n) => style.getPropertyValue(n).trim();
-  cx.font = "11px system-ui"; cx.fillStyle = "#6b7785"; cx.strokeStyle = "#e3e8ee"; cx.lineWidth = 1;
-  const yP = (v) => 6 + (topH - 12) * (1 - Math.min(Math.max(v, 0), len) / len);
-  for (let i = 0; i <= 4; i++) { const v = len * i / 4, y = yP(v); cx.beginPath(); cx.moveTo(padL, y); cx.lineTo(w - padR, y); cx.stroke(); cx.fillText(v.toFixed(0), 4, y + 4); }
-  const yA = (v) => botY + botH * (1 - (Math.min(Math.max(v, -lim), lim) + lim) / (2 * lim));
-  cx.beginPath(); cx.moveTo(padL, yA(0)); cx.lineTo(w - padR, yA(0)); cx.stroke(); cx.fillText("0°", 4, yA(0) + 4);
-  cx.fillText("+" + lim, 4, botY + 8); cx.fillText("−" + lim, 4, botY + botH);
-  if (hist.length < 2) return;
-  const t1 = hist[hist.length - 1].t, win = 10000, xT = (t) => padL + (w - padL - padR) * (1 - (t1 - t) / win);
-  const line = (key, color, yf, dash, valid) => {
-    cx.beginPath(); cx.strokeStyle = color; cx.lineWidth = 2; cx.setLineDash(dash || []); let pen = false;
-    for (const p of hist) { if (t1 - p.t > win || (valid && !valid(p))) { pen = false; continue; } const x = xT(p.t), y = yf(p[key]); if (!pen) { cx.moveTo(x, y); pen = true; } else cx.lineTo(x, y); }
-    cx.stroke(); cx.setLineDash([]);
-  };
-  line("sp", col("--sp"), yP, [6, 4], (p) => p.pid);
-  line("x", col("--pos"), yP, null, (p) => p.ok);
-  line("a", col("--ang"), yA);
+  const small = w < 520, padL = small ? 38 : 46, padR = small ? 60 : 66, padT = 12, padB = 26, gap = small ? 14 : 20;
+  const x0 = padL, x1 = w - padR, tY0 = padT, tY1 = padT + (h - padT - padB - gap) * 0.70, bY0 = tY1 + gap, bY1 = h - padB;
+  const yP = (v) => tY1 - (tY1 - tY0) * Math.min(Math.max(v, 0), len) / len;
+  const yA = (v) => bY1 - (bY1 - bY0) * (Math.min(Math.max(v, -lim), lim) + lim) / (2 * lim);
+  // sfondo dei due riquadri
+  g.fillStyle = C.plot; roundRect(g, x0, tY0, x1 - x0, tY1 - tY0, 10); g.fill(); roundRect(g, x0, bY0, x1 - x0, bY1 - bY0, 10); g.fill();
+  g.font = "11.5px system-ui, sans-serif"; g.textBaseline = "middle";
+  // griglia orizzontale (posizione)
+  const st = niceStep(len / 5); g.lineWidth = 1;
+  for (let v = 0; v <= len + 1e-6; v += st) { const y = yP(v); g.strokeStyle = C.grid; g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke(); g.fillStyle = C.axis; g.textAlign = "right"; g.fillText(v.toFixed(0), x0 - 8, y); }
+  g.save(); g.translate(12, (tY0 + tY1) / 2); g.rotate(-Math.PI / 2); g.textAlign = "center"; g.fillStyle = C.axis; g.fillText("cm", 0, 0); g.restore();
+  // angolo
+  for (const v of [-lim, 0, lim]) { const y = yA(v); g.strokeStyle = v === 0 ? C.axis : C.grid; g.setLineDash(v === 0 ? [4, 4] : []); g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke(); g.setLineDash([]); g.fillStyle = C.axis; g.textAlign = "right"; g.fillText((v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v) + "°", x0 - 8, y); }
+  const last = hist[hist.length - 1];
+  if (!last) {
+    g.fillStyle = C.axis; g.textAlign = "center"; g.font = "15px system-ui, sans-serif";
+    g.fillText(connected ? "In attesa dei dati dalla scheda…" : "Collegati alla scheda (USB o Wi-Fi) oppure prova la simulazione", (x0 + x1) / 2, (tY0 + tY1) / 2); return;
+  }
+  const win = chartWin * 1000, t1 = last.t, xT = (t) => x0 + (x1 - x0) * (1 - (t1 - t) / win);
+  // griglia verticale + tempo
+  const tick = chartWin <= 10 ? 1 : chartWin <= 30 ? 5 : 10; g.textAlign = "center";
+  for (let s = 0; s <= chartWin; s += tick) {
+    const x = x1 - (x1 - x0) * s / chartWin; g.strokeStyle = C.grid; g.beginPath(); g.moveTo(x, tY0); g.lineTo(x, tY1); g.moveTo(x, bY0); g.lineTo(x, bY1); g.stroke();
+    g.fillStyle = C.axis; g.fillText(s === 0 ? "ora" : "−" + s + " s", x, bY1 + 14);
+  }
+  g.save(); g.beginPath(); g.rect(x0, tY0 - 2, x1 - x0, bY1 - tY0 + 4); g.clip();
+  const vis = hist.filter((p) => t1 - p.t <= win);
+  // palla non vista
+  let s0 = null;
+  for (let i = 0; i <= vis.length; i++) {
+    const bad = i < vis.length && !vis[i].ok;
+    if (bad && s0 === null) s0 = vis[i].t; else if (!bad && s0 !== null) { const xa = xT(s0), xb = xT(vis[i - 1].t); g.fillStyle = rgba(C.bad, 0.13); g.fillRect(xa, tY0, Math.max(3, xb - xa), tY1 - tY0); s0 = null; }
+  }
+  // banda ±1.5 cm intorno all'obiettivo e linea obiettivo
+  const pv = vis.filter((p) => p.pid);
+  if (pv.length > 1) {
+    g.beginPath(); pv.forEach((p, i) => { const x = xT(p.t), y = yP(p.sp + 1.5); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+    for (let i = pv.length - 1; i >= 0; i--) g.lineTo(xT(pv[i].t), yP(pv[i].sp - 1.5));
+    g.closePath(); g.fillStyle = rgba(C.sp, 0.13); g.fill();
+    g.beginPath(); g.strokeStyle = C.sp; g.lineWidth = 2; g.setLineDash([9, 6]); let pen = false;
+    for (const p of vis) { if (!p.pid) { pen = false; continue; } const x = xT(p.t), y = yP(p.sp); if (!pen) { g.moveTo(x, y); pen = true; } else g.lineTo(x, y); }
+    g.stroke(); g.setLineDash([]);
+  }
+  // posizione: area + linea
+  const pts = vis.filter((p) => p.ok);
+  if (pts.length > 1) {
+    const grad = g.createLinearGradient(0, tY0, 0, tY1); grad.addColorStop(0, rgba(C.pos, 0.28)); grad.addColorStop(1, rgba(C.pos, 0));
+    g.beginPath(); pts.forEach((p, i) => { const x = xT(p.t), y = yP(p.x); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+    g.lineTo(xT(pts[pts.length - 1].t), tY1); g.lineTo(xT(pts[0].t), tY1); g.closePath(); g.fillStyle = grad; g.fill();
+    g.beginPath(); g.strokeStyle = C.pos; g.lineWidth = 2.6; g.lineJoin = "round"; let pen = false;
+    for (const p of vis) { if (!p.ok) { pen = false; continue; } const x = xT(p.t), y = yP(p.x); if (!pen) { g.moveTo(x, y); pen = true; } else g.lineTo(x, y); }
+    g.stroke();
+  }
+  // angolo
+  g.beginPath(); g.strokeStyle = C.ang; g.lineWidth = 2.2; g.lineJoin = "round";
+  vis.forEach((p, i) => { const x = xT(p.t), y = yA(p.a); i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.stroke();
+  g.restore();
+  // etichette in fondo alle linee
+  const tag = (txt, y, col) => { g.font = "600 12.5px ui-monospace, Consolas, monospace"; const tw = g.measureText(txt).width + 14; g.fillStyle = col; roundRect(g, x1 + 8, y - 11, tw, 22, 11); g.fill(); g.fillStyle = "#fff"; g.textAlign = "left"; g.fillText(txt, x1 + 15, y); };
+  if (last.ok) { const y = yP(last.x); g.fillStyle = C.pos; g.beginPath(); g.arc(x1, y, 5, 0, 7); g.fill(); g.strokeStyle = C.plot; g.lineWidth = 2; g.stroke(); tag(last.x.toFixed(1), y, C.pos); }
+  if (last.pid) tag("▸ " + last.sp.toFixed(1), Math.min(Math.max(yP(last.sp), tY0 + 11), tY1 - 11) + (last.ok && Math.abs(yP(last.sp) - yP(last.x)) < 24 ? (yP(last.sp) < yP(last.x) ? -13 : 13) : 0), C.sp);
+  g.fillStyle = C.ang; g.beginPath(); g.arc(x1, yA(last.a), 4.5, 0, 7); g.fill(); tag(last.a.toFixed(1) + "°", yA(last.a), C.ang);
+  if (!last.ok) { g.fillStyle = C.bad; g.font = "600 13px system-ui, sans-serif"; g.textAlign = "left"; g.fillText("palla non vista", x0 + 12, tY0 + 16); }
 }
-// ---------------- vista della simulazione ----------------
-const sv = $("simView"), sx = sv.getContext("2d");
-function drawSim() {
-  if (!sim) return;
-  const dpr = window.devicePixelRatio || 1, w = sv.clientWidth, h = sv.clientHeight;
-  if (sv.width !== w * dpr || sv.height !== h * dpr) { sv.width = w * dpr; sv.height = h * dpr; }
-  sx.setTransform(dpr, 0, 0, dpr, 0, 0); sx.clearRect(0, 0, w, h);
-  const v = sim.view(), L = w - 40, cxm = w / 2, cy = h * 0.55, th = v.theta * Math.PI / 180;
-  sx.fillStyle = "#94a3b8"; sx.beginPath(); sx.moveTo(cxm, cy + 4); sx.lineTo(cxm - 12, h - 4); sx.lineTo(cxm + 12, h - 4); sx.fill();
-  sx.save(); sx.translate(cxm, cy); sx.rotate(th);
-  sx.fillStyle = "#475569"; sx.fillRect(-L / 2, 0, L, 6);
-  sx.fillStyle = "#16202c"; sx.fillRect(-L / 2 - 6, -8, 6, 14);                 // il sensore è a sinistra (posizione 0)
-  const bx = -L / 2 + (v.x / v.length) * L;
-  sx.fillStyle = "#2563eb"; sx.beginPath(); sx.arc(bx, -9, 9, 0, 7); sx.fill();
-  sx.restore();
+
+// ---------------- vista animata della trave ----------------
+const bv = $("beamView");
+function drawBeam() {
+  const f = fitCanvas(bv); if (!f) return;
+  const { g, w, h } = f, last = hist[hist.length - 1];
+  const C = { pos:cssv("--pos"), sp:cssv("--sp"), ink:cssv("--ink"), muted:cssv("--muted"), axis:cssv("--axis") };
+  let theta = 0, x = null, len = Math.max(10, +$("cLen").value || 70), sp = null;
+  if (sim) { const v = sim.view(); theta = v.theta; x = v.x; len = v.length; if (last && last.pid) sp = last.sp; }
+  else if (connected && last) { theta = last.a; x = last.ok ? last.x : null; sp = last.pid ? last.sp : null; if (x !== null && x > len) len = x; }
+  const L = w - 70, cxm = w / 2 + 10, cy = h * 0.5, th = Math.max(-35, Math.min(35, theta * 2)) * Math.PI / 180, k = (v) => -L / 2 + (v / len) * L;
+  // supporto
+  const sg = g.createLinearGradient(0, cy, 0, h); sg.addColorStop(0, "#a5b4fc"); sg.addColorStop(1, "#6366f1");
+  g.fillStyle = sg; g.beginPath(); g.moveTo(cxm, cy + 6); g.lineTo(cxm - 16, h - 8); g.lineTo(cxm + 16, h - 8); g.closePath(); g.fill();
+  g.fillStyle = C.axis; g.globalAlpha = 0.4; roundRect(g, cxm - 60, h - 9, 120, 5, 2.5); g.fill(); g.globalAlpha = 1;
+  g.save(); g.translate(cxm, cy); g.rotate(th);
+  // trave
+  const bg = g.createLinearGradient(0, 0, 0, 10); bg.addColorStop(0, "#e2e8f0"); bg.addColorStop(1, "#94a3b8");
+  g.fillStyle = bg; roundRect(g, -L / 2, 0, L, 10, 5); g.fill();
+  g.strokeStyle = "rgba(15,23,42,.45)"; g.lineWidth = 1; g.font = "10px system-ui"; g.textAlign = "center"; g.fillStyle = "rgba(15,23,42,.65)"; g.textBaseline = "alphabetic";
+  const ts = len > 100 ? 20 : 10;
+  for (let v = 0; v <= len; v += ts) { g.beginPath(); g.moveTo(k(v), 0); g.lineTo(k(v), 4); g.stroke(); g.fillText(v, k(v), 17); }
+  // sensore (posizione 0)
+  const sgr = g.createLinearGradient(0, -16, 0, 6); sgr.addColorStop(0, "#334155"); sgr.addColorStop(1, "#0f172a");
+  g.fillStyle = sgr; roundRect(g, -L / 2 - 16, -17, 16, 26, 4); g.fill(); g.fillStyle = "#38bdf8"; g.beginPath(); g.arc(-L / 2 - 4, -6, 3, 0, 7); g.fill();
+  if (x !== null) {
+    g.strokeStyle = rgba(C.pos, 0.35); g.setLineDash([4, 4]); g.beginPath(); g.moveTo(-L / 2 - 4, -6); g.lineTo(k(x) - 10, -14); g.stroke(); g.setLineDash([]);
+  }
+  if (sp !== null) {                                       // bandierina dell'obiettivo
+    g.strokeStyle = C.sp; g.lineWidth = 2; g.beginPath(); g.moveTo(k(sp), 0); g.lineTo(k(sp), -34); g.stroke();
+    g.fillStyle = C.sp; g.beginPath(); g.moveTo(k(sp), -34); g.lineTo(k(sp) + 14, -29); g.lineTo(k(sp), -24); g.closePath(); g.fill();
+  }
+  if (x !== null) {                                        // palla
+    const bx = k(x), r = 11;
+    g.fillStyle = "rgba(0,0,0,.22)"; g.beginPath(); g.ellipse(bx + 2, 1, r * 0.9, 3, 0, 0, 7); g.fill();
+    const rg = g.createRadialGradient(bx - 4, -r - 4, 2, bx, -r, r + 2); rg.addColorStop(0, "#bfdbfe"); rg.addColorStop(0.45, C.pos); rg.addColorStop(1, "#1e3a8a");
+    g.fillStyle = rg; g.beginPath(); g.arc(bx, -r, r, 0, 7); g.fill();
+  }
+  g.restore();
+  g.fillStyle = C.muted; g.font = "11px system-ui"; g.textAlign = "left"; g.textBaseline = "alphabetic";
+  g.fillText(!connected ? "Collegati o avvia la simulazione" : x === null ? "palla non vista dal sensore" : "inclinazione ingrandita ×2", 10, h - 8);
 }
-(function loop() { drawChart(); drawSim(); requestAnimationFrame(loop); })();
+(function loop() { drawChart(); drawBeam(); requestAnimationFrame(loop); })();
+
+// ---------------- pulsanti −/+ , scorciatoie ----------------
+for (const b of document.querySelectorAll(".step")) b.onclick = () => {
+  const sl = $(b.dataset.t), st = +sl.step || 1;
+  let v = Math.max(+sl.min, Math.round((+sl.value + (+b.dataset.d) * st) / st) * st); v = +v.toFixed(6);
+  if (v > +sl.max) sl.max = v; sl.value = v; sl.oninput();
+};
+window.addEventListener("keydown", (e) => {                // Esc (o Spazio in modalità PID) = STOP
+  if (!connected || /INPUT|SELECT|TEXTAREA/.test((document.activeElement || {}).tagName || "")) return;
+  if (e.key === "Escape" || (e.key === " " && mode === "pid")) { e.preventDefault(); stopPid(); }
+});
 
 // =====================================================================
 //  AZIONI
@@ -493,8 +592,10 @@ const pidVals = () => ({ sp:+$("sSp").value, kp:+$("sKp").value, ki:+$("sKi").va
 const PIDF = { sSp:["oSp", 1], sKp:["oKp", 2], sKi:["oKi", 3], sKd:["oKd", 3] };   // slider -> [casella numerica, decimali]
 function pidShow() {
   for (const [sl, [num, dec]] of Object.entries(PIDF)) if (document.activeElement !== $(num)) $(num).value = (+$(sl).value).toFixed(dec);
+  fillSliders();
 }
-function pidChanged() { pidDirty = true; try { localStorage.setItem("bb_pid", JSON.stringify(pidVals())); } catch (e) {} }
+function fillSliders() { for (const sl of Object.keys(PIDF)) { const e = $(sl), p = (+e.value - +e.min) / ((+e.max - +e.min) || 1) * 100; e.style.setProperty("--fill", Math.max(0, Math.min(100, p)) + "%"); } }
+function pidChanged() { fillSliders(); pidDirty = true; try { localStorage.setItem("bb_pid", JSON.stringify(pidVals())); } catch (e) {} }
 for (const [sl, [num]] of Object.entries(PIDF)) {
   $(sl).oninput = () => { pidShow(); pidChanged(); };
   $(num).oninput = () => {                                 // valore scritto a mano: allarga lo slider se serve
@@ -528,6 +629,7 @@ function setMode(m) {
   mode = m;
   $("pidPanel").hidden = m !== "pid"; $("blocklyDiv").hidden = m === "pid"; $("levelWrap").hidden = m === "pid"; $("progCard").hidden = m === "pid";
   $("modePid").classList.toggle("on", m === "pid"); $("modeBlk").classList.toggle("on", m !== "pid");
+  (m === "pid" ? $("chartSlot") : $("asideChartSlot")).appendChild($("chartCard"));
   try { localStorage.setItem("bb_mode", m); } catch (e) {}
   if (m !== "pid") setTimeout(() => Blockly.svgResize(ws), 0);
   say("");
