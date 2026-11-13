@@ -12,7 +12,10 @@
 #define PIN_SDA   21
 #define PIN_SCL   22
 #define BAUD      115200
-#define FW_VERSION "1.0"
+#define FW_VERSION "1.1"
+#define CTRL_MS   5           // periodo del ciclo di controllo (ms)
+#define CTRL_DT   (CTRL_MS / 1000.0f)
+#define RANGE_MS  20          // tempo di misura del sensore (ms): a 10 ms il VL53L4CD non dà misure valide a questa distanza
 
 // ---------- Configurazione (modificabile da browser con "cfg") ----------
 static float cfgCenter = 90.0f;  // angolo servo con trave orizzontale
@@ -154,10 +157,10 @@ static void controlTask(void*) {
       if (!prevPid) { integ = 0; prevPos = pos; prevSampleMs = sampleMs ? sampleMs : g_lastGood; dFilt = 0; }
       if (newSample) {                              // PID aggiornato solo con campioni nuovi
         float dt = (sampleMs - prevSampleMs) / 1000.0f;
-        if (dt < 0.005f) dt = 0.02f;
+        if (dt < 0.004f) dt = CTRL_DT;
         integ = clampf(integ + err * dt, -50, 50);
         float dRaw = -(pos - prevPos) / dt;         // derivata sulla misura
-        dFilt += 0.3f * (dRaw - dFilt);
+        dFilt += (dt / (0.04f + dt)) * (dRaw - dFilt);   // passa-basso con costante di tempo 40 ms
         prevPos = pos;
         prevSampleMs = sampleMs;
       }
@@ -169,7 +172,7 @@ static void controlTask(void*) {
     if (g_stopReq) { g_pid = false; writeServo(0); }
     xSemaphoreGive(servoMutex);
 
-    vTaskDelayUntil(&last, pdMS_TO_TICKS(20));
+    vTaskDelayUntil(&last, pdMS_TO_TICKS(CTRL_MS));
   }
 }
 
@@ -245,7 +248,7 @@ void setup() {
   Wire.setClock(400000);
   sensor.begin();
   sensor.VL53L4CD_SensorInit();
-  sensor.VL53L4CD_SetRangeTiming(20, 0);   // 20 ms di misura, continuo
+  sensor.VL53L4CD_SetRangeTiming(RANGE_MS, 0);   // misura continua
   sensor.VL53L4CD_StartRanging();
 
   g_lastGood = millis();
