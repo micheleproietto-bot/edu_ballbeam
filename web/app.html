@@ -41,6 +41,7 @@
   #msg.err { color:var(--bad); }
   input[type=range] { width:100%; }
   .hint { font-size:12.5px; color:var(--muted); }
+  .blocklyHighlighted > .blocklyPath { stroke:#facc15 !important; stroke-width:5px !important; }
   [hidden] { display:none !important; }
 </style>
 </head>
@@ -103,8 +104,7 @@
     <div class="card">
       <h2>Programma</h2>
       <div class="row">
-        <button id="btnExample1">Esempio: tieni la palla</button>
-        <button id="btnExample2">Esempio: due posizioni</button>
+        <label style="flex:1">Esempi <select id="examples" style="flex:1"></select></label>
       </div>
       <div class="row" style="margin-top:8px">
         <button id="btnSave">Salva file</button>

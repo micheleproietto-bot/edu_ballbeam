@@ -73,17 +73,39 @@ function startWith(blocks) {
   const first = chain(blocks);
   return { blocks:{ languageVersion:0, blocks:[ { type:"bb_start", x:40, y:40, deletable:false, ...(first ? { next:{ block:first } } : {}) } ] } };
 }
-const EX1 = startWith([
-  { type:"bb_setpoint", inputs:{ V:nb(20) } },
-  { type:"bb_pid", inputs:{ KP:nb(2), KI:nb(0), KD:nb(1) } },
-  { type:"bb_forever", inputs:{ DO:{ block:{ type:"bb_wait", inputs:{ V:nb(0.1) } } } } },
-]);
-const EX2 = startWith([
-  { type:"bb_pid", inputs:{ KP:nb(2), KI:nb(0), KD:nb(1) } },
-  { type:"bb_forever", inputs:{ DO:{ block: chain([
-      { type:"bb_setpoint", inputs:{ V:nb(12) } }, { type:"bb_wait", inputs:{ V:nb(6) } },
-      { type:"bb_setpoint", inputs:{ V:nb(28) } }, { type:"bb_wait", inputs:{ V:nb(6) } } ]) } } },
-]);
+const EXAMPLES = [
+  { name:"1 · Inclina la trave", level:1, note:"La trave si inclina da una parte, poi dall'altra, poi torna orizzontale.",
+    state: startWith([ { type:"bb_servo", inputs:{ V:nb(6) } }, { type:"bb_wait", inputs:{ V:nb(1) } },
+      { type:"bb_servo", inputs:{ V:nb(-6) } }, { type:"bb_wait", inputs:{ V:nb(1) } }, { type:"bb_servo", inputs:{ V:nb(0) } } ]) },
+  { name:"2 · Ripeti più volte", level:1, note:"Il blocco “ripeti” evita di copiare gli stessi blocchi tante volte.",
+    state: startWith([ { type:"controls_repeat_ext", inputs:{ TIMES:nb(3), DO:{ block: chain([
+      { type:"bb_servo", inputs:{ V:nb(8) } }, { type:"bb_wait", inputs:{ V:nb(0.5) } },
+      { type:"bb_servo", inputs:{ V:nb(-8) } }, { type:"bb_wait", inputs:{ V:nb(0.5) } } ]) } } },
+      { type:"bb_servo", inputs:{ V:nb(0) } } ]) },
+  { name:"3 · Leggi il sensore", level:1, note:"Muovi la palla con la mano e guarda i numeri nei Messaggi: è la distanza dal sensore in cm.",
+    state: startWith([ { type:"controls_repeat_ext", inputs:{ TIMES:nb(10), DO:{ block: chain([
+      { type:"bb_say", inputs:{ V:{ block:{ type:"bb_pos" } } } }, { type:"bb_wait", inputs:{ V:nb(0.5) } } ]) } } } ]) },
+  { name:"4 · Decidi con SE", level:2, note:"Se la palla è prima di 20 cm la spinge avanti, altrimenti indietro. Vedrai che oscilla: serve qualcosa di più furbo.",
+    state: startWith([ { type:"bb_forever", inputs:{ DO:{ block: chain([
+      { type:"controls_if", extraState:{ hasElse:true }, inputs:{
+        IF0:{ block:{ type:"logic_compare", fields:{ OP:"LT" }, inputs:{ A:{ block:{ type:"bb_pos" } }, B:nb(20) } } },
+        DO0:{ block:{ type:"bb_servo", inputs:{ V:nb(6) } } }, ELSE:{ block:{ type:"bb_servo", inputs:{ V:nb(-6) } } } } },
+      { type:"bb_wait", inputs:{ V:nb(0.05) } } ]) } } } ]) },
+  { name:"5 · Controllo proporzionale a mano", level:2, note:"Più la palla è lontana da 20 cm, più inclini la trave. Ma senza “frenare” la palla oscilla!",
+    state: (() => { const st = startWith([ { type:"bb_forever", inputs:{ DO:{ block: chain([
+      { type:"variables_set", fields:{ VAR:{ id:"v_err" } }, inputs:{ VALUE:{ block:{ type:"math_arithmetic", fields:{ OP:"MINUS" }, inputs:{ A:nb(20), B:{ block:{ type:"bb_pos" } } } } } } },
+      { type:"bb_servo", inputs:{ V:{ block:{ type:"math_arithmetic", fields:{ OP:"MULTIPLY" }, inputs:{ A:{ block:{ type:"variables_get", fields:{ VAR:{ id:"v_err" } } } }, B:nb(1.5) } } } } },
+      { type:"bb_wait", inputs:{ V:nb(0.05) } } ]) } } } ]);
+      st.variables = [ { name:"errore", id:"v_err" } ]; return st; })() },
+  { name:"6 · Tieni la palla con il PID", level:3, note:"Il PID fa da solo quello che hai provato a mano, e in più frena la palla (Kd).",
+    state: startWith([ { type:"bb_setpoint", inputs:{ V:nb(20) } }, { type:"bb_pid", inputs:{ KP:nb(2), KI:nb(0), KD:nb(1) } },
+      { type:"bb_forever", inputs:{ DO:{ block:{ type:"bb_wait", inputs:{ V:nb(0.1) } } } } } ]) },
+  { name:"7 · PID tra due posizioni", level:3, note:"Ogni 6 secondi l'obiettivo cambia: la palla viene portata da 12 a 28 cm e ritorno.",
+    state: startWith([ { type:"bb_pid", inputs:{ KP:nb(2), KI:nb(0), KD:nb(1) } },
+      { type:"bb_forever", inputs:{ DO:{ block: chain([
+        { type:"bb_setpoint", inputs:{ V:nb(12) } }, { type:"bb_wait", inputs:{ V:nb(6) } },
+        { type:"bb_setpoint", inputs:{ V:nb(28) } }, { type:"bb_wait", inputs:{ V:nb(6) } } ]) } } } ]) },
+];
 function loadState(st) {
   Blockly.Events.disable();
   try { Blockly.serialization.workspaces.load(st, ws); } finally { Blockly.Events.enable(); }
@@ -106,9 +128,18 @@ ws.addChangeListener((e) => { if (!e.isUiEvent) saveLocal(); });
 //  GENERATORE: blocchi -> programma JSON
 // =====================================================================
 class GenError extends Error {}
+let blockIds = [];                         // indice istruzione -> id del blocco (per evidenziare)
+const blockText = (b) => b.toString(40);
+function flagBlock(b) { try { ws.centerOnBlock(b.id); b.select(); } catch (e) {} }
+function problem(block, what) { flagBlock(block); throw new GenError("Nel blocco “" + blockText(block) + "” " + what); }
+// valore collegato a un ingresso: se è vuoto spiega dove
+function val(parent, name) {
+  const t = parent.getInputTargetBlock(name);
+  if (!t) problem(parent, "c'è un buco vuoto: riempilo con un numero o con un altro blocco.");
+  return expr(t);
+}
 function expr(block) {
-  if (!block) return 0;
-  const inp = (n) => expr(block.getInputTargetBlock(n));
+  const inp = (n) => val(block, n);
   switch (block.type) {
     case "math_number": return Number(block.getFieldValue("NUM"));
     case "logic_boolean": return block.getFieldValue("BOOL") === "TRUE" ? 1 : 0;
@@ -126,57 +157,78 @@ function expr(block) {
     case "math_arithmetic": {
       const m = { ADD:"+", MINUS:"-", MULTIPLY:"*", DIVIDE:"/" };
       const op = m[block.getFieldValue("OP")];
-      if (!op) throw new GenError("Operazione non supportata (usa + − × ÷).");
+      if (!op) problem(block, "questa operazione non è disponibile: usa + − × ÷.");
       return { o:"bin", op, a:inp("A"), b:inp("B") };
     }
     case "math_single": {
       const op = block.getFieldValue("OP");
       if (op === "ABS") return { o:"abs", a:inp("NUM") };
       if (op === "NEG") return { o:"bin", op:"-", a:0, b:inp("NUM") };
-      throw new GenError("Operazione non supportata: usa solo valore assoluto o negativo.");
+      problem(block, "questa operazione non è disponibile: usa solo valore assoluto o negativo.");
     }
-    default: throw new GenError("Blocco non supportato: " + block.type);
+    default: problem(block, "questo blocco non si può usare qui.");
   }
 }
 function varName(b) { return String(b.getField("VAR").getText()).slice(0, 15); }
 function chainOf(first) { const out = []; for (let b = first; b; b = b.getNextBlock()) { const s = stmt(b); if (s) out.push(s); } return out; }
 function stmt(b) {
-  const inp = (n) => expr(b.getInputTargetBlock(n));
+  const id = blockIds.length; blockIds.push(b.id);
+  const inp = (n) => val(b, n);
   const body = (n) => chainOf(b.getInputTargetBlock(n));
+  const tag = (o) => { o.i = id; return o; };
   switch (b.type) {
-    case "bb_servo": return { o:"servo", v:inp("V") };
-    case "bb_wait": return { o:"wait", v:inp("V") };
-    case "bb_say": return { o:"say", v:inp("V") };
-    case "bb_setpoint": return { o:"setpoint", v:inp("V") };
-    case "bb_pid": return { o:"pid", kp:inp("KP"), ki:inp("KI"), kd:inp("KD") };
-    case "bb_pid_off": return { o:"pid_off" };
-    case "bb_until": return { o:"until", c:inp("C") };
-    case "bb_forever": return { o:"forever", b:body("DO") };
-    case "controls_repeat_ext": return { o:"repeat", n:inp("TIMES"), b:body("DO") };
+    case "bb_servo": return tag({ o:"servo", v:inp("V") });
+    case "bb_wait": return tag({ o:"wait", v:inp("V") });
+    case "bb_say": return tag({ o:"say", v:inp("V") });
+    case "bb_setpoint": return tag({ o:"setpoint", v:inp("V") });
+    case "bb_pid": return tag({ o:"pid", kp:inp("KP"), ki:inp("KI"), kd:inp("KD") });
+    case "bb_pid_off": return tag({ o:"pid_off" });
+    case "bb_until": return tag({ o:"until", c:inp("C") });
+    case "bb_forever": return tag({ o:"forever", b:body("DO") });
+    case "controls_repeat_ext": return tag({ o:"repeat", n:inp("TIMES"), b:body("DO") });
     case "controls_whileUntil": {
       let c = inp("BOOL"); if (b.getFieldValue("MODE") === "UNTIL") c = { o:"not", a:c };
-      return { o:"while", c, b:body("DO") };
+      return tag({ o:"while", c, b:body("DO") });
     }
     case "controls_if": {
       let n = 0; while (b.getInput("IF" + n)) n++;
       let els = b.getInput("ELSE") ? body("ELSE") : [];
       for (let i = n - 1; i >= 0; i--) {
-        const node = { o:"if", c:inp("IF" + i), t:body("DO" + i) };
+        const node = tag({ o:"if", c:inp("IF" + i), t:body("DO" + i) });
         if (els.length) node.f = els;
         els = [node];
       }
       return els[0];
     }
-    case "variables_set": return { o:"set", n:varName(b), v:inp("VALUE") };
-    case "math_change": return { o:"change", n:varName(b), v:inp("DELTA") };
-    default: throw new GenError("Blocco non supportato: " + b.type);
+    case "variables_set": return tag({ o:"set", n:varName(b), v:inp("VALUE") });
+    case "math_change": return tag({ o:"change", n:varName(b), v:inp("DELTA") });
+    default: problem(b, "questo blocco non si può usare qui.");
   }
 }
 function buildProgram() {
+  blockIds = [];
   const starts = ws.getBlocksByType("bb_start", true);
   if (!starts.length) throw new GenError("Manca il blocco “quando premo AVVIA”.");
   return chainOf(starts[0].getNextBlock());
 }
+function jsonDepth(x) { if (x === null || typeof x !== "object") return 0; let m = 0; for (const k in x) m = Math.max(m, jsonDepth(x[k])); return m + 1; }
+
+// ---------------- messaggi comprensibili ----------------
+const FRIENDLY = {
+  "sensore non valido: stop": "Il sensore non vede più la palla, quindi ho fermato tutto. Rimetti la palla sulla trave davanti al sensore (e controlla il cavetto).",
+  "sensore non valido": "Non posso partire: il sensore non vede la palla. Mettila sulla trave davanti al sensore.",
+  "connessione persa: stop": "Il computer non parla più con la scheda (cavo staccato o pagina ferma): la trave è tornata orizzontale.",
+  "ferma il programma prima": "Prima di cambiare le impostazioni premi STOP.",
+  "programma in esecuzione": "Un programma sta già girando: premi STOP e riprova.",
+  "già in esecuzione": "Un programma sta già girando: premi STOP e riprova.",
+  "nessun programma": "La scheda non ha ricevuto nessun programma: premi di nuovo AVVIA.",
+  "programma vuoto": "La scheda ha ricevuto un programma vuoto.",
+  "JSON non valido": "La scheda non ha capito il programma: forse ha troppi blocchi uno dentro l'altro. Prova a semplificarlo.",
+  "riga troppo lunga": "Il programma è troppo grande per la scheda: usa meno blocchi.",
+  "programma troppo annidato": "Ci sono troppi blocchi uno dentro l'altro: semplifica il programma.",
+  "comando sconosciuto": "La scheda non conosce questo comando: il suo software potrebbe essere vecchio.",
+};
+const friendly = (m) => FRIENDLY[m] || m;
 
 // =====================================================================
 //  USB (Web Serial)
@@ -212,14 +264,19 @@ function usbLink() {
     }
   } };
 }
-async function send(obj) { if (!link) return; try { await sendRaw(JSON.stringify(obj) + "\n"); } catch (e) { logLine("Errore invio: " + e.message, "err"); } }
+async function send(obj) { if (!link) return; try { await sendRaw(JSON.stringify(obj) + "\n"); } catch (e) { logLine("Non riesco a mandare i dati alla scheda: " + e.message, "err"); } }
 
 async function connect() {
   if (!("serial" in navigator)) { say("Questo browser non supporta l'USB. Usa Chrome o Edge.", true); return; }
   try {
     port = await navigator.serial.requestPort();
     await port.open({ baudRate:115200 });
-  } catch (e) { say("Connessione annullata: " + e.message, true); port = null; return; }
+  } catch (e) {
+    port = null;
+    say(e.name === "NotFoundError" ? "Non hai scelto nessuna scheda."
+      : "Non riesco ad aprire la porta: forse la sta usando un altro programma (Arduino IDE, monitor seriale…). Chiudilo e riprova.", true);
+    return;
+  }
   writer = port.writable.getWriter(); link = usbLink(); connected = true; sensorOk = false; say("");
   refreshUi(); readLoop();
   setTimeout(() => send({ c:"hello" }), 1800);             // l'ESP32 può riavviarsi all'apertura della porta
@@ -258,7 +315,7 @@ async function readLoop() {
       let i; while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (line[0] === "{") handleLine(line); }
       if (buf.length > 20000) buf = "";
     }
-  } catch (e) { logLine("Porta chiusa: " + e.message, "err"); }
+  } catch (e) { logLine("Collegamento interrotto: " + e.message, "err"); }
   try { reader.releaseLock(); } catch (e) {}
   if (connected) { clearInterval(pingTimer); connected = false; running = false; port = writer = reader = link = null; say("Cavo scollegato.", true); refreshUi(); }
 }
@@ -269,9 +326,9 @@ function handleLine(line) {
   let o; try { o = JSON.parse(line); } catch (e) { return; }
   if (o.e) {
     if (o.e === "hello") { logLine("ESP32 pronto (fw " + o.fw + ")", "info"); }
-    else if (o.e === "err") { logLine("⚠ " + o.m, "err"); say(o.m, true); }
+    else if (o.e === "err") { logLine("⚠ " + friendly(o.m), "err"); say(friendly(o.m), true); }
     else if (o.e === "log") { logLine("→ " + (+o.v).toFixed(2), "info"); }
-    else if (o.e === "done") { logLine("Programma finito.", "info"); }
+    else if (o.e === "done") { logLine("Programma finito.", "info"); highlight(null); }
     return;
   }
   if (o.x === undefined) return;
@@ -280,7 +337,10 @@ function handleLine(line) {
   hist.push({ t:o.t, x:+o.x, sp:+o.sp, a:+o.a, pid:o.pid, ok:o.ok }); if (hist.length > 220) hist.shift();
   $("vPos").textContent = o.ok ? (+o.x).toFixed(1) : "–"; $("vSp").textContent = o.pid ? (+o.sp).toFixed(1) : "–"; $("vAng").textContent = (+o.a).toFixed(1);
   lastSp = o.pid ? +o.sp : null;
+  highlight(running && o.s !== undefined ? blockIds[o.s] : null);
 }
+let hlId = null;
+function highlight(id) { id = id || null; if (id === hlId) return; hlId = id; try { ws.highlightBlock(id); } catch (e) {} }
 
 // ---------------- grafico ----------------
 const cv = $("chart"), cx = cv.getContext("2d");
@@ -335,7 +395,8 @@ async function run() {
   let prog; try { prog = buildProgram(); } catch (e) { say(e.message, true); return; }
   if (!prog.length) { say("Il programma è vuoto: aggiungi blocchi sotto “quando premo AVVIA”.", true); return; }
   const line = JSON.stringify({ c:"prog", p:prog });
-  if (line.length > 11000) { say("Programma troppo grande: usa meno blocchi.", true); return; }
+  if (jsonDepth({ c:"prog", p:prog }) > 40) { say("Ci sono troppi blocchi uno dentro l'altro (al massimo circa 18 livelli): semplifica il programma.", true); return; }
+  if (line.length > 11000) { say("Il programma è troppo grande per la scheda (" + line.length + " byte su 11000): usa meno blocchi.", true); return; }
   say(""); hist.length = 0;
   await send(cfgObj()); await new Promise((r) => setTimeout(r, 100));
   await sendRaw(line + "\n"); await new Promise((r) => setTimeout(r, 150));
@@ -346,7 +407,7 @@ $("btnSim").onclick = () => (sim ? disconnect() : connectSim());
 $("simBall").oninput = (e) => { if (sim) sim.setBall((e.target.value / 100) * (+$("cLen").value || 40)); };
 $("simMount").onchange = (e) => { if (sim) sim.setMountInverted(e.target.checked); };
 $("btnRun").onclick = run;
-$("btnStop").onclick = () => { send({ c:"stop" }); say(""); };
+$("btnStop").onclick = () => { send({ c:"stop" }); say(""); highlight(null); };
 $("tryAngle").oninput = (e) => { $("tryVal").textContent = e.target.value; if (!running) send({ c:"angle", v:+e.target.value }); };
 for (const id of ["cCenter", "cLimit", "cInv"]) $(id).onchange = () => {
   const l = Math.min(35, Math.max(1, +$("cLimit").value || 20)); $("cLimit").value = l; $("tryAngle").min = -l; $("tryAngle").max = l;
@@ -357,8 +418,15 @@ $("cLen").onchange = () => { $("cCenter").onchange(); if (sim) sim.setLength(+$(
 try { const s = JSON.parse(localStorage.getItem("bb_cfg") || "null"); if (s) { $("cCenter").value = s.c; $("cLimit").value = s.l; $("cInv").checked = s.i; $("cLen").value = s.n; $("tryAngle").min = -s.l; $("tryAngle").max = s.l; } } catch (e) {}
 
 $("level").onchange = (e) => ws.updateToolbox(toolboxFor(+e.target.value));
-$("btnExample1").onclick = () => loadState(EX1);
-$("btnExample2").onclick = () => loadState(EX2);
+(function fillExamples() {
+  const sel = $("examples"); sel.add(new Option("Scegli un esempio…", ""));
+  EXAMPLES.forEach((e, i) => sel.add(new Option(e.name + (e.level > 1 ? "  (livello " + e.level + ")" : ""), String(i))));
+  sel.onchange = () => {
+    const e = EXAMPLES[+sel.value]; sel.value = ""; if (!e) return;
+    if (+$("level").value < e.level) { $("level").value = String(e.level); ws.updateToolbox(toolboxFor(e.level)); }
+    loadState(e.state); highlight(null); say(e.note);
+  };
+})();
 $("btnNew").onclick = () => { if (confirm("Cancellare il programma attuale?")) loadState(startWith([])); };
 $("btnSave").onclick = () => {
   const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(Blockly.serialization.workspaces.save(ws))], { type:"application/json" }));
