@@ -511,12 +511,14 @@ function drawBeam() {
   let theta = 0, x = null, len = Math.max(10, +$("cLen").value || 70), sp = null;
   if (sim) { const v = sim.view(); theta = v.theta; x = v.x; len = v.length; if (last && last.pid) sp = last.sp; }
   else if (connected && last) { theta = last.a; x = last.ok ? last.x : null; sp = last.pid ? last.sp : null; if (x !== null && x > len) len = x; }
-  const L = w - 70, cxm = w / 2 + 10, cy = h * 0.5, th = Math.max(-35, Math.min(35, theta * 2)) * Math.PI / 180, k = (v) => -L / 2 + (v / len) * L;
+  // il perno è sul lato sinistro (sensore); la lunghezza è limitata così che alla massima inclinazione la trave resti nel riquadro
+  const maxA = Math.max(5, +$("cLimit").value || 20) * Math.PI / 180;
+  const L = Math.min(w - 90, (h / 2 - 30) / Math.sin(maxA)), cxm = (w - L) / 2 + 8, cy = h * 0.5, th = Math.max(-35, Math.min(35, theta)) * Math.PI / 180, k = (v) => -L / 2 + (v / len) * L;
   // supporto
   const sg = g.createLinearGradient(0, cy, 0, h); sg.addColorStop(0, "#a5b4fc"); sg.addColorStop(1, "#6366f1");
   g.fillStyle = sg; g.beginPath(); g.moveTo(cxm, cy + 6); g.lineTo(cxm - 16, h - 8); g.lineTo(cxm + 16, h - 8); g.closePath(); g.fill();
   g.fillStyle = C.axis; g.globalAlpha = 0.4; roundRect(g, cxm - 60, h - 9, 120, 5, 2.5); g.fill(); g.globalAlpha = 1;
-  g.save(); g.translate(cxm, cy); g.rotate(th);
+  g.save(); g.translate(cxm, cy); g.rotate(th); g.translate(L / 2, 0);     // ruota attorno all'estremo sinistro
   // trave
   const bg = g.createLinearGradient(0, 0, 0, 10); bg.addColorStop(0, "#e2e8f0"); bg.addColorStop(1, "#94a3b8");
   g.fillStyle = bg; roundRect(g, -L / 2, 0, L, 10, 5); g.fill();
@@ -540,8 +542,8 @@ function drawBeam() {
     g.fillStyle = rg; g.beginPath(); g.arc(bx, -r, r, 0, 7); g.fill();
   }
   g.restore();
-  g.fillStyle = C.muted; g.font = "11px system-ui"; g.textAlign = "left"; g.textBaseline = "alphabetic";
-  g.fillText(!connected ? "Collegati o avvia la simulazione" : x === null ? "palla non vista dal sensore" : "inclinazione ingrandita ×2", 10, h - 8);
+  g.fillStyle = C.muted; g.font = "11px system-ui"; g.textAlign = "right"; g.textBaseline = "alphabetic";
+  g.fillText(!connected ? "Collegati o avvia la simulazione" : x === null ? "palla non vista dal sensore" : "inclinazione reale", w - 10, h - 8);
 }
 (function loop() { drawChart(); drawBeam(); requestAnimationFrame(loop); })();
 
