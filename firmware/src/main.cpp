@@ -6,13 +6,23 @@
 #include <ArduinoJson.h>
 #include <vl53l4cd_class.h>
 #include <interp.h>
+#if __has_include("secrets.h")          // Wi-Fi: copia secrets.example.h in secrets.h
+#include "secrets.h"
+#define HAVE_WIFI 1
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ESPmDNS.h>
+#include <WebSocketsServer.h>
+extern const uint8_t page_gz_start[] asm("_binary_embed_page_html_gz_start");   // pagina web compressa (embed_page.py)
+extern const uint8_t page_gz_end[]   asm("_binary_embed_page_html_gz_end");
+#endif
 
 // ---------- Hardware ----------
 #define PIN_SERVO 13
 #define PIN_SDA   21
 #define PIN_SCL   22
 #define BAUD      115200
-#define FW_VERSION "1.5"
+#define FW_VERSION "1.6"
 #define D_SAMPLES 4           // la derivata è calcolata su questi campioni (meno rumore del sensore)
 #define D_TAU     0.07f       // costante di tempo del filtro sulla derivata (s)
 #define HOLD_MS   3000        // palla fuori portata: per questo tempo il PID usa l'ultima posizione nota, poi raddrizza la trave
@@ -51,10 +61,31 @@ static bool g_progLoaded = false;
 // ---------- Utilità ----------
 static float clampf(float v, float lo, float hi) { return bb::clampf(v, lo, hi); }
 
-static void sendDoc(const JsonDocument& d) {
+// Coda dei messaggi per i client WebSocket (scritta da qualunque task, svuotata dal loop()).
+#define WSQ_N 24
+static String wsq[WSQ_N];
+static int wsqHead = 0, wsqCount = 0;
+static volatile int wsClients = 0;
+static void wsEnqueue(const String& s) {            // da chiamare con txMutex preso
+  if (!wsClients) return;
+  if (wsqCount == WSQ_N) { wsqHead = (wsqHead + 1) % WSQ_N; wsqCount--; }   // coda piena: scarta il più vecchio
+  wsq[(wsqHead + wsqCount) % WSQ_N] = s; wsqCount++;
+}
+static bool wsPop(String& out) {
   xSemaphoreTake(txMutex, portMAX_DELAY);
-  serializeJson(d, Serial);
+  bool ok = wsqCount > 0;
+  if (ok) { out = wsq[wsqHead]; wsqHead = (wsqHead + 1) % WSQ_N; wsqCount--; }
+  xSemaphoreGive(txMutex);
+  return ok;
+}
+
+static void sendDoc(const JsonDocument& d) {        // USB seriale + Wi-Fi
+  String line;
+  serializeJson(d, line);
+  xSemaphoreTake(txMutex, portMAX_DELAY);
+  Serial.print(line);
   Serial.print('\n');
+  wsEnqueue(line);
   xSemaphoreGive(txMutex);
 }
 static void sendErr(const char* m) { JsonDocument d; d["e"] = "err"; d["m"] = m; sendDoc(d); }
@@ -206,7 +237,12 @@ static void handleLine(const char* line) {
   g_lastPing = millis();
   if (!strcmp(c, "hello")) {
     JsonDocument r; r["e"] = "hello"; r["v"] = 1; r["fw"] = FW_VERSION; r["ok"] = g_posOk ? 1 : 0;
-    r["limit"] = cfgLimit; sendDoc(r);
+    r["limit"] = cfgLimit;
+#ifdef HAVE_WIFI
+    r["wifi"] = WiFi.status() == WL_CONNECTED ? 1 : 0;
+    if (WiFi.status() == WL_CONNECTED) { r["ip"] = WiFi.localIP().toString(); r["rssi"] = WiFi.RSSI(); }
+#endif
+    sendDoc(r);
   } else if (!strcmp(c, "ping")) {
     // heartbeat: g_lastPing già aggiornato
   } else if (!strcmp(c, "cfg")) {
@@ -257,6 +293,62 @@ static void handleLine(const char* line) {
   }
 }
 
+#ifdef HAVE_WIFI
+// ---------- Wi-Fi: pagina web (porta 80) + WebSocket (porta 81), stesso protocollo della seriale ----------
+static WebServer http(80);
+static WebSocketsServer wsServer(81);
+static bool netStarted = false;
+static uint32_t wifiLastTry = 0;
+static char wsBuf[12288];
+
+static void onWsEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
+  if (type == WStype_CONNECTED) { wsClients = wsClients + 1; }
+  else if (type == WStype_DISCONNECTED) { if (wsClients > 0) wsClients = wsClients - 1; }
+  else if (type == WStype_TEXT) {
+    if (length == 0) return;
+    if (length >= sizeof(wsBuf)) { sendErr("riga troppo lunga"); return; }
+    memcpy(wsBuf, payload, length); wsBuf[length] = 0;
+    handleLine(wsBuf);
+  }
+}
+
+static void wifiStart() {
+  WiFi.mode(WIFI_STA);
+  WiFi.setHostname("ballbeam");
+  WiFi.setSleep(false);                              // niente risparmio energetico: latenza minima
+  WiFi.config(IPAddress(WIFI_IP), IPAddress(WIFI_GW), IPAddress(WIFI_MASK), IPAddress(WIFI_GW));
+  WiFi.setAutoReconnect(true);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+}
+
+static void netLoop() {
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!netStarted) {
+      netStarted = true;
+      MDNS.begin("ballbeam");                        // http://ballbeam.local
+      http.on("/", HTTP_GET, []() {
+        http.sendHeader("Content-Encoding", "gzip");
+        http.sendHeader("Cache-Control", "no-cache");
+        http.send_P(200, "text/html", (const char*)page_gz_start, (size_t)(page_gz_end - page_gz_start));
+      });
+      http.on("/health", HTTP_GET, []() { http.send(200, "text/plain", "ok"); });
+      http.onNotFound([]() { http.send(404, "text/plain", "non trovato"); });
+      http.begin();
+      wsServer.begin();
+      wsServer.onEvent(onWsEvent);
+      JsonDocument w; w["e"] = "wifi"; w["ip"] = WiFi.localIP().toString(); sendDoc(w);
+    }
+    http.handleClient();
+    wsServer.loop();
+    String l; int n = 0;
+    while (n++ < 8 && wsPop(l)) wsServer.broadcastTXT(l);
+  } else if (millis() - wifiLastTry > 15000) {        // rete persa: riprova
+    wifiLastTry = millis();
+    WiFi.reconnect();
+  }
+}
+#endif
+
 static void pollSerial() {
   while (Serial.available()) {
     char ch = (char)Serial.read();
@@ -290,10 +382,16 @@ void setup() {
   g_lastGood = millis();
   xTaskCreatePinnedToCore(controlTask, "ctrl", 4096, nullptr, 3, nullptr, 1);
   xTaskCreatePinnedToCore(programTask, "prog", 8192, nullptr, 2, nullptr, 0);
+#ifdef HAVE_WIFI
+  wifiStart();
+#endif
 }
 
 void loop() {
   pollSerial();
+#ifdef HAVE_WIFI
+  netLoop();
+#endif
   static uint32_t lastTel = 0;
   if (millis() - lastTel >= 50) {
     lastTel = millis();
