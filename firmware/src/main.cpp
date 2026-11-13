@@ -12,7 +12,9 @@
 #define PIN_SDA   21
 #define PIN_SCL   22
 #define BAUD      115200
-#define FW_VERSION "1.3"
+#define FW_VERSION "1.4"
+#define D_SAMPLES 4           // la derivata è calcolata su questi campioni (meno rumore del sensore)
+#define D_TAU     0.07f       // costante di tempo del filtro sulla derivata (s)
 #define HOLD_MS   3000        // palla fuori portata: per questo tempo il PID usa l'ultima posizione nota, poi raddrizza la trave
 #define CTRL_MS   5           // periodo del ciclo di controllo (ms)
 #define CTRL_DT   (CTRL_MS / 1000.0f)
@@ -126,6 +128,7 @@ static void programTask(void*) {
 static void controlTask(void*) {
   float integ = 0, prevPos = 0, dFilt = 0;
   uint32_t prevSampleMs = 0;
+  float hp[D_SAMPLES + 1]; uint32_t ht[D_SAMPLES + 1]; int hn = 0;   // ultime posizioni e istanti
   bool prevPid = false, wasLost = false;
   TickType_t last = xTaskGetTickCount();
   for (;;) {
@@ -161,13 +164,18 @@ static void controlTask(void*) {
     if (g_pid && age <= HOLD_MS) {
       float pos = g_pos;                                // se la palla è persa: ultima posizione nota
       float err = g_sp - pos;
-      if (!prevPid || wasLost) { wasLost = false; integ = 0; prevPos = pos; prevSampleMs = sampleMs ? sampleMs : g_lastGood; dFilt = 0; }
+      if (!prevPid || wasLost) { wasLost = false; integ = 0; prevPos = pos; prevSampleMs = sampleMs ? sampleMs : g_lastGood; dFilt = 0; hp[0] = pos; ht[0] = prevSampleMs; hn = 1; }
       if (newSample) {                              // PID aggiornato solo con campioni nuovi
         float dt = (sampleMs - prevSampleMs) / 1000.0f;
         if (dt < 0.004f) dt = CTRL_DT;
         integ = clampf(integ + err * dt, -50, 50);
-        float dRaw = -(pos - prevPos) / dt;         // derivata sulla misura
-        dFilt += (dt / (0.04f + dt)) * (dRaw - dFilt);   // passa-basso con costante di tempo 40 ms
+        if (hn == D_SAMPLES + 1) {                  // finestra scorrevole di D_SAMPLES+1 posizioni
+          memmove(hp, hp + 1, D_SAMPLES * sizeof(float)); memmove(ht, ht + 1, D_SAMPLES * sizeof(uint32_t)); hn = D_SAMPLES;
+        }
+        hp[hn] = pos; ht[hn] = sampleMs; hn++;
+        float span = (ht[hn - 1] - ht[0]) / 1000.0f;
+        float dRaw = span > 0.004f ? -(pos - hp[0]) / span : 0;   // derivata sulla misura (non sull'errore)
+        dFilt += (dt / (D_TAU + dt)) * (dRaw - dFilt);            // poi passa-basso
         prevPos = pos;
         prevSampleMs = sampleMs;
       }
