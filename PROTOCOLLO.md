@@ -13,6 +13,7 @@ Collegamento: USB seriale, 115200 baud, 8N1. Una riga = un messaggio JSON (termi
 | run | `{"c":"run"}` | Avvia il programma caricato |
 | stop | `{"c":"stop"}` | Ferma programma e PID, trave a zero |
 | angle | `{"c":"angle","v":5}` | Angolo manuale (solo a programma fermo), per calibrare |
+| tune | `{"c":"tune","on":1,"sp":20,"kp":2,"ki":0,"kd":1}` | **Modalità PID**: nessun programma, il PID gira sull'ESP32 (ciclo 5 ms). `sp` (0–100 cm), `kp` (0–50), `ki` (0–20), `kd` (0–20) sono opzionali e si possono mandare anche a PID acceso (la pagina li manda ~10 volte/s). `on:1` accende (rifiutato se il sensore non è valido), `on:0` spegne e porta la trave a zero. Valgono le stesse sicurezze del programma; `cfg` e `angle` sono ignorati/rifiutati mentre è attivo. Telemetria: `run:1` e `pid:1`. |
 
 ## ESP32 → Browser
 
