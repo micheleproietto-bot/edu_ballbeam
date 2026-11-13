@@ -32,6 +32,7 @@ static volatile bool  g_stopReq = false;
 static volatile bool  g_startReq = false;
 static volatile uint32_t g_lastPing = 0;
 static volatile uint32_t g_lastGood = 0;
+static volatile int g_cur = -1;         // indice dell'istruzione in esecuzione (per evidenziare il blocco)
 
 static Servo servo;
 static VL53L4CD sensor(&Wire, -1);
@@ -93,6 +94,7 @@ struct FwHost : bb::Host {
   }
   void say(float v) override { JsonDocument d; d["e"] = "log"; d["v"] = v; sendDoc(d); }
   void fail(const char* msg) override { sendErr(msg); g_stopReq = true; }
+  void stmt(int id) override { g_cur = id; }
 };
 static FwHost fwHost;
 static bb::Interp interp(fwHost);
@@ -102,7 +104,9 @@ static void programTask(void*) {
     if (g_startReq) {
       g_startReq = false;
       g_lastPing = millis();
+      g_cur = -1;
       interp.run(g_prog["p"]);
+      g_cur = -1;
       bool wasStopped = g_stopReq;
       g_running = false;
       g_stopReq = false;
@@ -262,6 +266,7 @@ void loop() {
     t["run"] = g_running ? 1 : 0;
     t["pid"] = g_pid ? 1 : 0;
     t["ok"] = g_posOk ? 1 : 0;
+    if (g_running && g_cur >= 0) t["s"] = (int)g_cur;
     sendDoc(t);
   }
   delay(2);

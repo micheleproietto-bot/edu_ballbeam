@@ -24,6 +24,7 @@ struct Host {
   virtual void pidOff() = 0;
   virtual void say(float v) = 0;
   virtual void fail(const char* msg) = 0; // segnala l'errore E richiede lo stop
+  virtual void stmt(int id) = 0;          // sta per eseguire l'istruzione con indice "i" (-1 se assente): serve a evidenziare il blocco
 };
 
 // NaN -> lo (così un valore impazzito non diventa mai un angolo o un'attesa assurda)
@@ -119,6 +120,7 @@ class Interp {
   void execStmt(JsonVariantConst s, int depth) {
     if (depth > MAX_DEPTH) { h_.fail("programma troppo annidato"); return; }
     if (!s.is<JsonObjectConst>()) return;
+    h_.stmt(s["i"] | -1);
     const char* o = s["o"] | "";
     if (!strcmp(o, "servo"))         h_.servo(evalE(s["v"]));
     else if (!strcmp(o, "wait"))     waitMs((uint32_t)(clampf(evalE(s["v"]), 0, 3600) * 1000));
