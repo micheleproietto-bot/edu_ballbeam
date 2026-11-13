@@ -4412,7 +4412,12 @@ function handleLine(line) {
     if (o.e === "hello") { logLine("ESP32 pronto (fw " + o.fw + ")", "info"); }
     else if (o.e === "err") { logLine("⚠ " + friendly(o.m), "err"); say(friendly(o.m), true); }
     else if (o.e === "log") { logLine("→ " + (+o.v).toFixed(2), "info"); }
-    else if (o.e === "done") { logLine("Programma finito.", "info"); highlight(null); }
+    else if (o.e === "done") {
+    logLine("Programma finito.", "info"); highlight(null);
+    if (runUsesServo && performance.now() - runStart < 1500) {
+      say("Il programma è finito subito e la trave è tornata orizzontale. Per tenerla inclinata metti i blocchi dentro “per sempre” (con un “aspetta” dentro).");
+    }
+  }
     return;
   }
   if (o.x === undefined) return;
@@ -4423,7 +4428,7 @@ function handleLine(line) {
   lastSp = o.pid ? +o.sp : null;
   highlight(running && o.s !== undefined ? blockIds[o.s] : null);
 }
-let hlId = null;
+let hlId = null, runStart = 0, runUsesServo = false;
 function highlight(id) { id = id || null; if (id === hlId) return; hlId = id; try { ws.highlightBlock(id); } catch (e) {} }
 
 // ---------------- grafico ----------------
@@ -4484,6 +4489,10 @@ async function run() {
   if (jsonDepth({ c:"prog", p:prog }) > 40) { say("Ci sono troppi blocchi uno dentro l'altro (al massimo circa 18 livelli): semplifica il programma.", true); return; }
   if (line.length > 11000) { say("Il programma è troppo grande per la scheda (" + line.length + " byte su 11000): usa meno blocchi.", true); return; }
   say(""); hist.length = 0;
+  runStart = performance.now(); runUsesServo = line.includes('"o":"servo"');
+  const lim = Math.min(35, Math.max(1, +$("cLimit").value || 20)), over = [];
+  (function walk(x) { if (x && typeof x === "object") { if (x.o === "servo" && typeof x.v === "number" && Math.abs(x.v) > lim) over.push(x.v); for (const k in x) walk(x[k]); } })(prog);
+  if (over.length) logLine("Nota: la trave non supera ±" + lim + "° (limite di sicurezza): " + over.join(", ") + " verrà ridotto.", "info");
   await send(cfgObj()); await new Promise((r) => setTimeout(r, 100));
   await sendRaw(line + "\n"); await new Promise((r) => setTimeout(r, 150));
   await send({ c:"run" }); logLine("Avvio programma (" + line.length + " byte)", "info");
