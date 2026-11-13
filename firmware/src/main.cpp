@@ -12,7 +12,7 @@
 #define PIN_SDA   21
 #define PIN_SCL   22
 #define BAUD      115200
-#define FW_VERSION "1.4"
+#define FW_VERSION "1.5"
 #define D_SAMPLES 4           // la derivata è calcolata su questi campioni (meno rumore del sensore)
 #define D_TAU     0.07f       // costante di tempo del filtro sulla derivata (s)
 #define HOLD_MS   3000        // palla fuori portata: per questo tempo il PID usa l'ultima posizione nota, poi raddrizza la trave
@@ -21,7 +21,7 @@
 #define RANGE_MS  20          // tempo di misura del sensore (ms): a 10 ms il VL53L4CD non dà misure valide a questa distanza
 
 // ---------- Configurazione (modificabile da browser con "cfg") ----------
-static float cfgCenter = 90.0f;  // angolo servo con trave orizzontale
+static float cfgCenter = 91.0f;  // angolo servo con trave orizzontale (misurato sulla trave reale)
 static float cfgLimit  = 20.0f;  // escursione massima ± gradi
 static bool  cfgInv    = false;  // inverte il verso del servo
 static const float HARD_LIMIT = 35.0f;
