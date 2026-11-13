@@ -3970,7 +3970,7 @@ return Blockly.Msg;
         if (!C.prevPid) { C.integ = 0; C.prevPos = S.pos; C.dFilt = 0; }
         C.integ = clampf(C.integ + err * dt, -50, 50);
         const dRaw = -(S.pos - C.prevPos) / dt;                     // derivata sulla misura
-        C.dFilt += 0.3 * (dRaw - C.dFilt);
+        C.dFilt += (dt / (0.04 + dt)) * (dRaw - C.dFilt);
         C.prevPos = S.pos;
         writeServo(S.kp * err + S.ki * C.integ + S.kd * C.dFilt);
       } else if (S.pid && !S.posOk) writeServo(0);
