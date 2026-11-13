@@ -183,6 +183,8 @@ function buildProgram() {
 // =====================================================================
 const $ = (id) => document.getElementById(id);
 let port = null, writer = null, reader = null, pingTimer = null, connected = false, running = false, sensorOk = false;
+let link = null;                       // { write(str) }: USB oppure simulatore
+let sim = null, simTimer = null;
 const enc = new TextEncoder();
 
 function logLine(text, cls) {
@@ -191,21 +193,26 @@ function logLine(text, cls) {
 }
 function say(text, isErr) { const m = $("msg"); m.textContent = text || ""; m.className = isErr ? "err" : ""; }
 function refreshUi() {
-  $("connBadge").textContent = connected ? "connesso" : "non connesso"; $("connBadge").className = "badge " + (connected ? "ok" : "");
+  $("connBadge").textContent = connected ? (sim ? "simulazione" : "connesso") : "non connesso"; $("connBadge").className = "badge " + (connected ? "ok" : "");
+  $("btnSim").textContent = sim ? "Esci dalla simulazione" : "🧪 Simulazione"; $("btnSim").disabled = connected && !sim; $("btnConnect").disabled = !!sim;
+  $("simCard").hidden = !sim;
   $("sensorBadge").textContent = connected ? (sensorOk ? "sensore OK" : "sensore ?") : "sensore ?";
   $("sensorBadge").className = "badge " + (connected ? (sensorOk ? "ok" : "bad") : "");
   $("btnConnect").textContent = connected ? "Disconnetti" : "Connetti USB";
   $("btnRun").disabled = !connected || running; $("btnStop").disabled = !connected;
   $("tryAngle").disabled = !connected || running;
 }
-async function sendRaw(str) {
-  const data = enc.encode(str);
-  for (let i = 0; i < data.length; i += 128) {           // a pezzi, per non saturare il buffer dell'ESP32
-    await writer.write(data.slice(i, i + 128));
-    if (data.length > 128) await new Promise((r) => setTimeout(r, 8));
-  }
+async function sendRaw(str) { await link.write(str); }
+function usbLink() {
+  return { async write(str) {
+    const data = enc.encode(str);
+    for (let i = 0; i < data.length; i += 128) {         // a pezzi, per non saturare il buffer dell'ESP32
+      await writer.write(data.slice(i, i + 128));
+      if (data.length > 128) await new Promise((r) => setTimeout(r, 8));
+    }
+  } };
 }
-async function send(obj) { if (!writer) return; try { await sendRaw(JSON.stringify(obj) + "\n"); } catch (e) { logLine("Errore invio: " + e.message, "err"); } }
+async function send(obj) { if (!link) return; try { await sendRaw(JSON.stringify(obj) + "\n"); } catch (e) { logLine("Errore invio: " + e.message, "err"); } }
 
 async function connect() {
   if (!("serial" in navigator)) { say("Questo browser non supporta l'USB. Usa Chrome o Edge.", true); return; }
@@ -213,18 +220,34 @@ async function connect() {
     port = await navigator.serial.requestPort();
     await port.open({ baudRate:115200 });
   } catch (e) { say("Connessione annullata: " + e.message, true); port = null; return; }
-  writer = port.writable.getWriter(); connected = true; sensorOk = false; say("");
+  writer = port.writable.getWriter(); link = usbLink(); connected = true; sensorOk = false; say("");
   refreshUi(); readLoop();
   setTimeout(() => send({ c:"hello" }), 1800);             // l'ESP32 può riavviarsi all'apertura della porta
   pingTimer = setInterval(() => send({ c:"ping" }), 500);
 }
+function connectSim() {
+  sim = BBSim.createSim({ length: +$("cLen").value || 40, mountInverted: $("simMount").checked, noise: 0.1, onLine: (l) => handleLine(l) });
+  sim.setBall(($("simBall").value / 100) * (+$("cLen").value || 40));
+  link = { async write(s) { sim.write(s); } };
+  connected = true; sensorOk = false; say("");
+  let last = performance.now(), acc = 0;
+  simTimer = setInterval(() => {                           // tempo simulato = tempo reale (al massimo 100 ms per volta)
+    const n = performance.now(); acc = Math.min(acc + n - last, 100); last = n;
+    const ms = Math.floor(acc); acc -= ms; if (sim) sim.step(ms);
+  }, 10);
+  pingTimer = setInterval(() => send({ c:"ping" }), 500);
+  setTimeout(() => send({ c:"hello" }), 50);
+  logLine("Simulazione avviata: palla e trave virtuali.", "info");
+  refreshUi();
+}
 async function disconnect() {
   clearInterval(pingTimer); pingTimer = null;
+  if (sim) { clearInterval(simTimer); simTimer = null; sim = null; link = null; connected = false; running = false; sensorOk = false; hist.length = 0; refreshUi(); return; }
   try { await send({ c:"stop" }); } catch (e) {}
   try { if (reader) await reader.cancel(); } catch (e) {}
   try { if (writer) { writer.releaseLock(); } } catch (e) {}
   try { if (port) await port.close(); } catch (e) {}
-  port = writer = reader = null; connected = false; running = false; refreshUi();
+  port = writer = reader = link = null; connected = false; running = false; refreshUi();
 }
 async function readLoop() {
   reader = port.readable.getReader(); const dec = new TextDecoder(); let buf = "";
@@ -237,7 +260,7 @@ async function readLoop() {
     }
   } catch (e) { logLine("Porta chiusa: " + e.message, "err"); }
   try { reader.releaseLock(); } catch (e) {}
-  if (connected) { clearInterval(pingTimer); connected = false; running = false; port = writer = reader = null; say("Cavo scollegato.", true); refreshUi(); }
+  if (connected) { clearInterval(pingTimer); connected = false; running = false; port = writer = reader = link = null; say("Cavo scollegato.", true); refreshUi(); }
 }
 
 // ---------------- messaggi dall'ESP32 ----------------
@@ -286,7 +309,23 @@ function drawChart() {
   line("x", col("--pos"), yP, null, (p) => p.ok);
   line("a", col("--ang"), yA);
 }
-(function loop() { drawChart(); requestAnimationFrame(loop); })();
+// ---------------- vista della simulazione ----------------
+const sv = $("simView"), sx = sv.getContext("2d");
+function drawSim() {
+  if (!sim) return;
+  const dpr = window.devicePixelRatio || 1, w = sv.clientWidth, h = sv.clientHeight;
+  if (sv.width !== w * dpr || sv.height !== h * dpr) { sv.width = w * dpr; sv.height = h * dpr; }
+  sx.setTransform(dpr, 0, 0, dpr, 0, 0); sx.clearRect(0, 0, w, h);
+  const v = sim.view(), L = w - 40, cxm = w / 2, cy = h * 0.55, th = v.theta * Math.PI / 180;
+  sx.fillStyle = "#94a3b8"; sx.beginPath(); sx.moveTo(cxm, cy + 4); sx.lineTo(cxm - 12, h - 4); sx.lineTo(cxm + 12, h - 4); sx.fill();
+  sx.save(); sx.translate(cxm, cy); sx.rotate(th);
+  sx.fillStyle = "#475569"; sx.fillRect(-L / 2, 0, L, 6);
+  sx.fillStyle = "#16202c"; sx.fillRect(-L / 2 - 6, -8, 6, 14);                 // il sensore è a sinistra (posizione 0)
+  const bx = -L / 2 + (v.x / v.length) * L;
+  sx.fillStyle = "#2563eb"; sx.beginPath(); sx.arc(bx, -9, 9, 0, 7); sx.fill();
+  sx.restore();
+}
+(function loop() { drawChart(); drawSim(); requestAnimationFrame(loop); })();
 
 // =====================================================================
 //  AZIONI
@@ -303,6 +342,9 @@ async function run() {
   await send({ c:"run" }); logLine("Avvio programma (" + line.length + " byte)", "info");
 }
 $("btnConnect").onclick = () => (connected ? disconnect() : connect());
+$("btnSim").onclick = () => (sim ? disconnect() : connectSim());
+$("simBall").oninput = (e) => { if (sim) sim.setBall((e.target.value / 100) * (+$("cLen").value || 40)); };
+$("simMount").onchange = (e) => { if (sim) sim.setMountInverted(e.target.checked); };
 $("btnRun").onclick = run;
 $("btnStop").onclick = () => { send({ c:"stop" }); say(""); };
 $("tryAngle").oninput = (e) => { $("tryVal").textContent = e.target.value; if (!running) send({ c:"angle", v:+e.target.value }); };
@@ -311,7 +353,7 @@ for (const id of ["cCenter", "cLimit", "cInv"]) $(id).onchange = () => {
   try { localStorage.setItem("bb_cfg", JSON.stringify({ c:$("cCenter").value, l:$("cLimit").value, i:$("cInv").checked, n:$("cLen").value })); } catch (e) {}
   if (connected && !running) send(cfgObj());
 };
-$("cLen").onchange = $("cCenter").onchange;
+$("cLen").onchange = () => { $("cCenter").onchange(); if (sim) sim.setLength(+$("cLen").value || 40); };
 try { const s = JSON.parse(localStorage.getItem("bb_cfg") || "null"); if (s) { $("cCenter").value = s.c; $("cLimit").value = s.l; $("cInv").checked = s.i; $("cLen").value = s.n; $("tryAngle").min = -s.l; $("tryAngle").max = s.l; } } catch (e) {}
 
 $("level").onchange = (e) => ws.updateToolbox(toolboxFor(+e.target.value));

@@ -41,6 +41,7 @@
   #msg.err { color:var(--bad); }
   input[type=range] { width:100%; }
   .hint { font-size:12.5px; color:var(--muted); }
+  [hidden] { display:none !important; }
 </style>
 </head>
 <body>
@@ -55,6 +56,7 @@
   </label>
   <span id="sensorBadge" class="badge">sensore ?</span>
   <span id="connBadge" class="badge">non connesso</span>
+  <button id="btnSim" title="Prova i programmi senza ESP32: palla e trave virtuali">🧪 Simulazione</button>
   <button id="btnConnect" class="primary">Connetti USB</button>
 </header>
 <main>
@@ -79,6 +81,18 @@
         <div>Obiettivo<b id="vSp">–</b>cm</div>
         <div>Angolo<b id="vAng">–</b>gradi</div>
       </div>
+    </div>
+
+    <div class="card" id="simCard" hidden>
+      <h2>Simulazione</h2>
+      <canvas id="simView" style="height:90px"></canvas>
+      <div class="row" style="margin-top:6px">
+        <label style="flex:1">Palla <input type="range" id="simBall" min="0" max="100" value="50"></label>
+      </div>
+      <div class="row" style="margin-top:4px">
+        <label><input type="checkbox" id="simMount"> servo montato al contrario</label>
+      </div>
+      <div class="hint">Come un vero ball &amp; beam, ma virtuale. Prova a spuntare “servo montato al contrario” e poi correggi con “inverti verso” nella calibrazione.</div>
     </div>
 
     <div class="card">
@@ -122,6 +136,7 @@
 <script>/*__BLOCKLY__*/</script>
 <script>/*__MSG_IT__*/</script>
 <script>/*__INTERP__*/</script>
+<script>/*__SIM__*/</script>
 <script>/*__APP__*/</script>
 </body>
 </html>

@@ -41,6 +41,7 @@
   #msg.err { color:var(--bad); }
   input[type=range] { width:100%; }
   .hint { font-size:12.5px; color:var(--muted); }
+  [hidden] { display:none !important; }
 </style>
 </head>
 <body>
@@ -55,6 +56,7 @@
   </label>
   <span id="sensorBadge" class="badge">sensore ?</span>
   <span id="connBadge" class="badge">non connesso</span>
+  <button id="btnSim" title="Prova i programmi senza ESP32: palla e trave virtuali">🧪 Simulazione</button>
   <button id="btnConnect" class="primary">Connetti USB</button>
 </header>
 <main>
@@ -79,6 +81,18 @@
         <div>Obiettivo<b id="vSp">–</b>cm</div>
         <div>Angolo<b id="vAng">–</b>gradi</div>
       </div>
+    </div>
+
+    <div class="card" id="simCard" hidden>
+      <h2>Simulazione</h2>
+      <canvas id="simView" style="height:90px"></canvas>
+      <div class="row" style="margin-top:6px">
+        <label style="flex:1">Palla <input type="range" id="simBall" min="0" max="100" value="50"></label>
+      </div>
+      <div class="row" style="margin-top:4px">
+        <label><input type="checkbox" id="simMount"> servo montato al contrario</label>
+      </div>
+      <div class="hint">Come un vero ball &amp; beam, ma virtuale. Prova a spuntare “servo montato al contrario” e poi correggi con “inverti verso” nella calibrazione.</div>
     </div>
 
     <div class="card">
@@ -3749,7 +3763,298 @@ Blockly.Msg["VARIABLES_HUE"] = "330";
 return Blockly.Msg;
 }));
 </script>
-<script></script>
+<script>// Interprete dei programmi a blocchi — gemello di firmware/lib/interp/interp.h.
+// La semantica deve restare IDENTICA (stessa suite: tests/cases.json, eseguita su entrambi).
+// Differenze solo meccaniche: qui il "sonno" è un `yield <ms>` (generatore), così nel browser
+// l'interprete non blocca la pagina. I numeri sono float a 32 bit come sul firmware (Math.fround).
+//
+// Host: { nowMs(), halted(), pos(), sp(), angle(), servo(v), setpoint(v), pidOn(kp,ki,kd), pidOff(), say(v), fail(msg) }
+(function (root) {
+  "use strict";
+  const f = Math.fround;
+  const MAX_VARS = 24, NAME_LEN = 15, MAX_DEPTH = 24;
+  const utf8 = new TextEncoder();
+
+  const clampf = (v, lo, hi) => (!(v >= lo) ? lo : v > hi ? hi : v);   // NaN -> lo
+  const toCount = (v) => (!(v > 0) ? 0 : v >= 2147483520 ? 2147483647 : Math.trunc(v));
+  // chiave variabile = primi 15 BYTE UTF-8 (come strncpy nel firmware)
+  const vkey = (n) => Array.prototype.join.call(utf8.encode(String(n)).subarray(0, NAME_LEN), ",");
+  const isObj = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
+
+  function createInterp(h) {
+    let vars = new Map(), t0 = 0;
+
+    function varRef(n) {                     // restituisce la chiave oppure null se finito lo spazio
+      const k = vkey(typeof n === "string" ? n : "x");
+      if (vars.has(k)) return k;
+      if (vars.size >= MAX_VARS) return null;
+      vars.set(k, 0);
+      return k;
+    }
+
+    function evalE(e) {
+      if (typeof e === "number") return f(e);
+      if (!isObj(e)) return 0;
+      const o = e.o;
+      if (o === "pos") return f(h.pos());
+      if (o === "sp") return f(h.sp());
+      if (o === "angle") return f(h.angle());
+      if (o === "time") return f(f((h.nowMs() - t0) >>> 0) / 1000);
+      if (o === "var") { const k = varRef(e.n); return k === null ? 0 : vars.get(k); }
+      if (o === "not") return evalE(e.a) === 0 ? 1 : 0;
+      if (o === "abs") return Math.abs(evalE(e.a));
+      const isAnd = o === "and", isOr = o === "or", isBin = o === "bin", isCmp = o === "cmp";
+      if (!(isAnd || isOr || isBin || isCmp)) return 0;
+      const a = evalE(e.a);
+      if (isAnd) return a !== 0 && evalE(e.b) !== 0 ? 1 : 0;
+      if (isOr) return a !== 0 || evalE(e.b) !== 0 ? 1 : 0;
+      const b = evalE(e.b), op = e.op;
+      if (isBin) {
+        if (op === "+") return f(a + b);
+        if (op === "-") return f(a - b);
+        if (op === "*") return f(a * b);
+        if (op === "/") return b === 0 ? 0 : f(a / b);
+        if (op === "min") return a < b ? a : b;
+        if (op === "max") return a > b ? a : b;
+      } else {
+        if (op === "<") return +(a < b);
+        if (op === ">") return +(a > b);
+        if (op === "<=") return +(a <= b);
+        if (op === ">=") return +(a >= b);
+        if (op === "==") return +(Math.abs(f(a - b)) < f(1e-4));
+        if (op === "!=") return +(Math.abs(f(a - b)) >= f(1e-4));
+      }
+      return 0;
+    }
+
+    function* waitMs(ms) {
+      const t = h.nowMs();
+      while (!h.halted() && ((h.nowMs() - t) >>> 0) < ms) yield 5;
+    }
+
+    function* execBlock(b, depth) {
+      if (!Array.isArray(b)) return;
+      for (const s of b) {
+        if (h.halted()) return;
+        yield* execStmt(s, depth);
+        yield 1;
+      }
+    }
+
+    function* execStmt(s, depth) {
+      if (depth > MAX_DEPTH) { h.fail("programma troppo annidato"); return; }
+      if (!isObj(s)) return;
+      switch (s.o) {
+        case "servo": h.servo(evalE(s.v)); break;
+        case "wait": yield* waitMs(Math.trunc(f(clampf(evalE(s.v), 0, 3600) * 1000))); break;
+        case "setpoint": h.setpoint(clampf(evalE(s.v), 0, 100)); break;
+        case "pid": { const kp = evalE(s.kp), ki = evalE(s.ki), kd = evalE(s.kd); h.pidOn(kp, ki, kd); break; }
+        case "pid_off": h.pidOff(); break;
+        case "set": { const v = evalE(s.v), k = varRef(s.n); if (k !== null) vars.set(k, v); break; }
+        case "change": { const v = evalE(s.v), k = varRef(s.n); if (k !== null) vars.set(k, f(vars.get(k) + v)); break; }
+        case "say": h.say(evalE(s.v)); break;
+        case "if":
+          if (evalE(s.c) !== 0) yield* execBlock(s.t, depth + 1); else yield* execBlock(s.f, depth + 1);
+          break;
+        case "repeat": {
+          const n = toCount(evalE(s.n));
+          for (let i = 0; i < n && !h.halted(); i++) { yield* execBlock(s.b, depth + 1); yield 1; }
+          break;
+        }
+        case "forever":
+          while (!h.halted()) { yield* execBlock(s.b, depth + 1); yield 1; }
+          break;
+        case "while":
+          while (!h.halted() && evalE(s.c) !== 0) { yield* execBlock(s.b, depth + 1); yield 1; }
+          break;
+        case "until":
+          while (!h.halted() && evalE(s.c) === 0) yield 5;
+          break;
+      }
+    }
+
+    return {
+      // generatore: ogni `yield ms` chiede di dormire per ms millisecondi
+      *run(prog) { vars = new Map(); t0 = h.nowMs(); yield* execBlock(prog, 0); },
+    };
+  }
+
+  const api = { createInterp, clampf };
+  if (typeof module !== "undefined" && module.exports) module.exports = api; else root.BBInterp = api;
+})(typeof globalThis !== "undefined" ? globalThis : this);
+</script>
+<script>// Dispositivo simulato: parla lo stesso protocollo dell'ESP32 (PROTOCOLLO.md) e fa girare lo stesso
+// interprete (interp.js). Contiene un porting JS della logica di firmware/src/main.cpp
+// (comandi, sicurezze, PID a 50 Hz) e una palla virtuale sulla trave.
+//
+// Uso:  const sim = createSim({ length: 40, onLine: (s) => ... });
+//       sim.write('{"c":"hello"}\n');  sim.step(ms);   // fa avanzare il tempo simulato
+(function (root) {
+  "use strict";
+  const { createInterp, clampf } = root.BBInterp || require("./interp.js");
+  const HARD_LIMIT = 35, G = 981 /* cm/s^2 */, K_BALL = 5 / 7 /* sfera piena che rotola */;
+
+  function createSim(opts) {
+    const o = Object.assign({ length: 40, x0: null, mountInverted: false, centerOffset: 0, noise: 0.1, friction: 0.5 }, opts);
+    const emit = (obj) => { if (o.onLine) o.onLine(JSON.stringify(obj)); };
+
+    // --- configurazione (come cfgCenter/cfgLimit/cfgInv nel firmware)
+    const cfg = { center: 90, limit: 20, inv: false };
+    // --- stato condiviso (come g_* nel firmware)
+    const S = { t: 0, pos: 0, posOk: false, sp: 20, angle: 0, pid: false, kp: 2, ki: 0, kd: 1,
+                running: false, stopReq: false, lastPing: 0, lastGood: 0 };
+    let prog = null, gen = null, wakeAt = 0, progLoaded = false;
+    // --- mondo fisico
+    const P = { x: o.x0 === null ? o.length / 2 : o.x0, v: 0, servoDeg: 90, cmdDeg: 90, theta: 0 };
+    // --- stato del task di controllo
+    const C = { integ: 0, prevPos: 0, dFilt: 0, prevPid: false };
+
+    // ---------- attuatore ----------
+    function writeServo(angle) {
+      const limit = clampf(cfg.limit, 1, HARD_LIMIT);
+      if (Number.isNaN(angle)) angle = 0;
+      angle = clampf(angle, -limit, limit);
+      S.angle = angle;
+      P.cmdDeg = Math.round(clampf(cfg.center + (cfg.inv ? -angle : angle), 0, 180));
+    }
+    function setManual(angle) { S.pid = false; writeServo(angle); }
+
+    // ---------- interprete ----------
+    const host = {
+      nowMs: () => S.t, halted: () => S.stopReq,
+      pos: () => S.pos, sp: () => S.sp, angle: () => S.angle,
+      servo: setManual, setpoint: (v) => { S.sp = v; },
+      pidOn: (kp, ki, kd) => { S.kp = kp; S.ki = ki; S.kd = kd; S.pid = true; },
+      pidOff: () => { S.pid = false; },
+      say: (v) => emit({ e: "log", v }),
+      fail: (m) => { emit({ e: "err", m }); S.stopReq = true; },
+    };
+    const interp = createInterp(host);
+
+    function advanceProgram() {
+      if (!gen || S.t < wakeAt) return;
+      const r = gen.next();
+      if (!r.done) { wakeAt = S.t + r.value; return; }
+      gen = null;
+      const wasStopped = S.stopReq;
+      S.running = false; S.stopReq = false;
+      setManual(0);
+      if (!wasStopped) emit({ e: "done" });
+    }
+
+    // ---------- fisica (passo da 1 ms) ----------
+    function physics() {
+      const dt = 0.001, maxMove = 300 * dt;                       // servo: 300 gradi/s
+      const d = P.cmdDeg - P.servoDeg;
+      P.servoDeg += Math.abs(d) <= maxMove ? d : Math.sign(d) * maxMove;
+      P.theta = (o.mountInverted ? -1 : 1) * (P.servoDeg - (90 + o.centerOffset));   // gradi; >0: la palla va verso x grandi
+      const a = K_BALL * G * Math.sin(P.theta * Math.PI / 180) - o.friction * P.v;
+      P.v += a * dt; P.x += P.v * dt;
+      const lo = 1.5, hi = o.length - 1.5;
+      if (P.x < lo) { P.x = lo; if (P.v < 0) P.v *= -0.2; }
+      if (P.x > hi) { P.x = hi; if (P.v > 0) P.v *= -0.2; }
+    }
+
+    // ---------- controllo a 50 Hz (porting di controlTask) ----------
+    function control() {
+      const dt = 0.02;
+      S.pos = Math.max(0.1, Math.round((P.x + (Math.random() - 0.5) * 2 * o.noise) * 10) / 10);
+      S.posOk = true; S.lastGood = S.t;
+      if (S.running && !S.stopReq && !S.posOk) { emit({ e: "err", m: "sensore non valido: stop" }); S.stopReq = true; }
+      if (S.running && !S.stopReq && S.t - S.lastPing > 2000) { emit({ e: "err", m: "connessione persa: stop" }); S.stopReq = true; }
+      if (S.stopReq && !S.running) S.stopReq = false;
+      if (S.pid && S.posOk) {
+        const err = S.sp - S.pos;
+        if (!C.prevPid) { C.integ = 0; C.prevPos = S.pos; C.dFilt = 0; }
+        C.integ = clampf(C.integ + err * dt, -50, 50);
+        const dRaw = -(S.pos - C.prevPos) / dt;                     // derivata sulla misura
+        C.dFilt += 0.3 * (dRaw - C.dFilt);
+        C.prevPos = S.pos;
+        writeServo(S.kp * err + S.ki * C.integ + S.kd * C.dFilt);
+      } else if (S.pid && !S.posOk) writeServo(0);
+      C.prevPid = S.pid;
+      if (S.stopReq) { S.pid = false; writeServo(0); }
+    }
+
+    // ---------- comandi (porting di handleLine) ----------
+    function depthOf(x, d) {
+      if (x === null || typeof x !== "object") return d;
+      let m = d + 1;
+      for (const k in x) m = Math.max(m, depthOf(x[k], d + 1));
+      return m;
+    }
+    function handleLine(line) {
+      let d;
+      try { d = JSON.parse(line); } catch (e) { return emit({ e: "err", m: "JSON non valido" }); }
+      if (depthOf(d, 0) > 40) return emit({ e: "err", m: "JSON non valido" });   // NestingLimit(40) del firmware
+      const c = d && typeof d.c === "string" ? d.c : "";
+      S.lastPing = S.t;
+      switch (c) {
+        case "hello": emit({ e: "hello", v: 1, fw: "sim", ok: S.posOk ? 1 : 0, limit: cfg.limit }); break;
+        case "ping": break;
+        case "cfg":
+          if (S.running) return emit({ e: "err", m: "ferma il programma prima" });
+          if (typeof d.center === "number") cfg.center = clampf(d.center, 60, 120);
+          if (typeof d.limit === "number") cfg.limit = clampf(d.limit, 1, HARD_LIMIT);
+          if (d.inv !== undefined && d.inv !== null) cfg.inv = Number(d.inv) !== 0;
+          setManual(0); emit({ e: "ok" }); break;
+        case "prog":
+          if (S.running) return emit({ e: "err", m: "programma in esecuzione" });
+          prog = d.p; progLoaded = prog !== undefined && prog !== null;
+          if (progLoaded) emit({ e: "ok" }); else emit({ e: "err", m: "programma vuoto" });
+          break;
+        case "run":
+          if (S.running) return emit({ e: "err", m: "già in esecuzione" });
+          if (!progLoaded) return emit({ e: "err", m: "nessun programma" });
+          if (!S.posOk) return emit({ e: "err", m: "sensore non valido" });
+          S.stopReq = false; S.running = true; S.lastPing = S.t;
+          gen = interp.run(prog); wakeAt = S.t;
+          break;
+        case "stop":
+          S.stopReq = true;
+          if (!S.running) { setManual(0); S.stopReq = false; }
+          break;
+        case "angle": if (!S.running) setManual(typeof d.v === "number" ? d.v : 0); break;
+        default: emit({ e: "err", m: "comando sconosciuto" });
+      }
+    }
+
+    let buf = "";
+    function write(str) {                                           // come la seriale: arrivano pezzi di testo
+      buf += str;
+      let i;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, i).replace(/\r$/, ""); buf = buf.slice(i + 1);
+        if (line.length > 12287) emit({ e: "err", m: "riga troppo lunga" });
+        else if (line.length) handleLine(line);
+      }
+    }
+
+    // ---------- tempo ----------
+    function step(ms) {
+      for (let i = 0; i < ms; i++) {
+        S.t++;
+        physics();
+        if (S.t % 20 === 0) control();
+        advanceProgram();
+        if (S.t % 50 === 0) emit({ t: S.t, x: +S.pos.toFixed(1), sp: S.sp, a: +S.angle.toFixed(1), run: S.running ? 1 : 0, pid: S.pid ? 1 : 0, ok: S.posOk ? 1 : 0 });
+      }
+    }
+    control();   // prima misura (il sensore del firmware è pronto in pochi ms)
+
+    return {
+      write, step,
+      view: () => ({ x: P.x, theta: P.theta, length: o.length }),
+      setBall: (x) => { P.x = clampf(x, 1.5, o.length - 1.5); P.v = 0; },
+      setLength: (l) => { o.length = l; P.x = clampf(P.x, 1.5, l - 1.5); },
+      setMountInverted: (b) => { o.mountInverted = !!b; },
+    };
+  }
+
+  const api = { createSim };
+  if (typeof module !== "undefined" && module.exports) module.exports = api; else root.BBSim = api;
+})(typeof globalThis !== "undefined" ? globalThis : this);
+</script>
 <script>"use strict";
 // =====================================================================
 //  BLOCCHI
@@ -3935,6 +4240,8 @@ function buildProgram() {
 // =====================================================================
 const $ = (id) => document.getElementById(id);
 let port = null, writer = null, reader = null, pingTimer = null, connected = false, running = false, sensorOk = false;
+let link = null;                       // { write(str) }: USB oppure simulatore
+let sim = null, simTimer = null;
 const enc = new TextEncoder();
 
 function logLine(text, cls) {
@@ -3943,21 +4250,26 @@ function logLine(text, cls) {
 }
 function say(text, isErr) { const m = $("msg"); m.textContent = text || ""; m.className = isErr ? "err" : ""; }
 function refreshUi() {
-  $("connBadge").textContent = connected ? "connesso" : "non connesso"; $("connBadge").className = "badge " + (connected ? "ok" : "");
+  $("connBadge").textContent = connected ? (sim ? "simulazione" : "connesso") : "non connesso"; $("connBadge").className = "badge " + (connected ? "ok" : "");
+  $("btnSim").textContent = sim ? "Esci dalla simulazione" : "🧪 Simulazione"; $("btnSim").disabled = connected && !sim; $("btnConnect").disabled = !!sim;
+  $("simCard").hidden = !sim;
   $("sensorBadge").textContent = connected ? (sensorOk ? "sensore OK" : "sensore ?") : "sensore ?";
   $("sensorBadge").className = "badge " + (connected ? (sensorOk ? "ok" : "bad") : "");
   $("btnConnect").textContent = connected ? "Disconnetti" : "Connetti USB";
   $("btnRun").disabled = !connected || running; $("btnStop").disabled = !connected;
   $("tryAngle").disabled = !connected || running;
 }
-async function sendRaw(str) {
-  const data = enc.encode(str);
-  for (let i = 0; i < data.length; i += 128) {           // a pezzi, per non saturare il buffer dell'ESP32
-    await writer.write(data.slice(i, i + 128));
-    if (data.length > 128) await new Promise((r) => setTimeout(r, 8));
-  }
+async function sendRaw(str) { await link.write(str); }
+function usbLink() {
+  return { async write(str) {
+    const data = enc.encode(str);
+    for (let i = 0; i < data.length; i += 128) {         // a pezzi, per non saturare il buffer dell'ESP32
+      await writer.write(data.slice(i, i + 128));
+      if (data.length > 128) await new Promise((r) => setTimeout(r, 8));
+    }
+  } };
 }
-async function send(obj) { if (!writer) return; try { await sendRaw(JSON.stringify(obj) + "\n"); } catch (e) { logLine("Errore invio: " + e.message, "err"); } }
+async function send(obj) { if (!link) return; try { await sendRaw(JSON.stringify(obj) + "\n"); } catch (e) { logLine("Errore invio: " + e.message, "err"); } }
 
 async function connect() {
   if (!("serial" in navigator)) { say("Questo browser non supporta l'USB. Usa Chrome o Edge.", true); return; }
@@ -3965,18 +4277,34 @@ async function connect() {
     port = await navigator.serial.requestPort();
     await port.open({ baudRate:115200 });
   } catch (e) { say("Connessione annullata: " + e.message, true); port = null; return; }
-  writer = port.writable.getWriter(); connected = true; sensorOk = false; say("");
+  writer = port.writable.getWriter(); link = usbLink(); connected = true; sensorOk = false; say("");
   refreshUi(); readLoop();
   setTimeout(() => send({ c:"hello" }), 1800);             // l'ESP32 può riavviarsi all'apertura della porta
   pingTimer = setInterval(() => send({ c:"ping" }), 500);
 }
+function connectSim() {
+  sim = BBSim.createSim({ length: +$("cLen").value || 40, mountInverted: $("simMount").checked, noise: 0.1, onLine: (l) => handleLine(l) });
+  sim.setBall(($("simBall").value / 100) * (+$("cLen").value || 40));
+  link = { async write(s) { sim.write(s); } };
+  connected = true; sensorOk = false; say("");
+  let last = performance.now(), acc = 0;
+  simTimer = setInterval(() => {                           // tempo simulato = tempo reale (al massimo 100 ms per volta)
+    const n = performance.now(); acc = Math.min(acc + n - last, 100); last = n;
+    const ms = Math.floor(acc); acc -= ms; if (sim) sim.step(ms);
+  }, 10);
+  pingTimer = setInterval(() => send({ c:"ping" }), 500);
+  setTimeout(() => send({ c:"hello" }), 50);
+  logLine("Simulazione avviata: palla e trave virtuali.", "info");
+  refreshUi();
+}
 async function disconnect() {
   clearInterval(pingTimer); pingTimer = null;
+  if (sim) { clearInterval(simTimer); simTimer = null; sim = null; link = null; connected = false; running = false; sensorOk = false; hist.length = 0; refreshUi(); return; }
   try { await send({ c:"stop" }); } catch (e) {}
   try { if (reader) await reader.cancel(); } catch (e) {}
   try { if (writer) { writer.releaseLock(); } } catch (e) {}
   try { if (port) await port.close(); } catch (e) {}
-  port = writer = reader = null; connected = false; running = false; refreshUi();
+  port = writer = reader = link = null; connected = false; running = false; refreshUi();
 }
 async function readLoop() {
   reader = port.readable.getReader(); const dec = new TextDecoder(); let buf = "";
@@ -3989,7 +4317,7 @@ async function readLoop() {
     }
   } catch (e) { logLine("Porta chiusa: " + e.message, "err"); }
   try { reader.releaseLock(); } catch (e) {}
-  if (connected) { clearInterval(pingTimer); connected = false; running = false; port = writer = reader = null; say("Cavo scollegato.", true); refreshUi(); }
+  if (connected) { clearInterval(pingTimer); connected = false; running = false; port = writer = reader = link = null; say("Cavo scollegato.", true); refreshUi(); }
 }
 
 // ---------------- messaggi dall'ESP32 ----------------
@@ -4038,7 +4366,23 @@ function drawChart() {
   line("x", col("--pos"), yP, null, (p) => p.ok);
   line("a", col("--ang"), yA);
 }
-(function loop() { drawChart(); requestAnimationFrame(loop); })();
+// ---------------- vista della simulazione ----------------
+const sv = $("simView"), sx = sv.getContext("2d");
+function drawSim() {
+  if (!sim) return;
+  const dpr = window.devicePixelRatio || 1, w = sv.clientWidth, h = sv.clientHeight;
+  if (sv.width !== w * dpr || sv.height !== h * dpr) { sv.width = w * dpr; sv.height = h * dpr; }
+  sx.setTransform(dpr, 0, 0, dpr, 0, 0); sx.clearRect(0, 0, w, h);
+  const v = sim.view(), L = w - 40, cxm = w / 2, cy = h * 0.55, th = v.theta * Math.PI / 180;
+  sx.fillStyle = "#94a3b8"; sx.beginPath(); sx.moveTo(cxm, cy + 4); sx.lineTo(cxm - 12, h - 4); sx.lineTo(cxm + 12, h - 4); sx.fill();
+  sx.save(); sx.translate(cxm, cy); sx.rotate(th);
+  sx.fillStyle = "#475569"; sx.fillRect(-L / 2, 0, L, 6);
+  sx.fillStyle = "#16202c"; sx.fillRect(-L / 2 - 6, -8, 6, 14);                 // il sensore è a sinistra (posizione 0)
+  const bx = -L / 2 + (v.x / v.length) * L;
+  sx.fillStyle = "#2563eb"; sx.beginPath(); sx.arc(bx, -9, 9, 0, 7); sx.fill();
+  sx.restore();
+}
+(function loop() { drawChart(); drawSim(); requestAnimationFrame(loop); })();
 
 // =====================================================================
 //  AZIONI
@@ -4055,6 +4399,9 @@ async function run() {
   await send({ c:"run" }); logLine("Avvio programma (" + line.length + " byte)", "info");
 }
 $("btnConnect").onclick = () => (connected ? disconnect() : connect());
+$("btnSim").onclick = () => (sim ? disconnect() : connectSim());
+$("simBall").oninput = (e) => { if (sim) sim.setBall((e.target.value / 100) * (+$("cLen").value || 40)); };
+$("simMount").onchange = (e) => { if (sim) sim.setMountInverted(e.target.checked); };
 $("btnRun").onclick = run;
 $("btnStop").onclick = () => { send({ c:"stop" }); say(""); };
 $("tryAngle").oninput = (e) => { $("tryVal").textContent = e.target.value; if (!running) send({ c:"angle", v:+e.target.value }); };
@@ -4063,7 +4410,7 @@ for (const id of ["cCenter", "cLimit", "cInv"]) $(id).onchange = () => {
   try { localStorage.setItem("bb_cfg", JSON.stringify({ c:$("cCenter").value, l:$("cLimit").value, i:$("cInv").checked, n:$("cLen").value })); } catch (e) {}
   if (connected && !running) send(cfgObj());
 };
-$("cLen").onchange = $("cCenter").onchange;
+$("cLen").onchange = () => { $("cCenter").onchange(); if (sim) sim.setLength(+$("cLen").value || 40); };
 try { const s = JSON.parse(localStorage.getItem("bb_cfg") || "null"); if (s) { $("cCenter").value = s.c; $("cLimit").value = s.l; $("cInv").checked = s.i; $("cLen").value = s.n; $("tryAngle").min = -s.l; $("tryAngle").max = s.l; } } catch (e) {}
 
 $("level").onchange = (e) => ws.updateToolbox(toolboxFor(+e.target.value));
