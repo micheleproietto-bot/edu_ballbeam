@@ -141,5 +141,24 @@ const evs = (r, e) => r.lines.filter((l) => l.e === e);
   r.prog([{ o: "forever", b: [] }]); r.run(100);
   r.send({ c: "tune", on: 1 }); ok(evs(r, "err").pop().m === "ferma il programma prima", "tune rifiutato mentre gira un programma");
 }
+// 11. palla fuori portata: non è un errore, niente stop, riprende da sola
+{
+  const r = rig({ x0: 30, length: 70 });
+  r.send({ c: "tune", on: 1, sp: 20, kp: 2, ki: 0, kd: 1 }); r.run(3000);
+  r.sim.setBallPresent(false); r.run(1500);
+  ok(r.last().run === 1 && r.last().ok === 0 && evs(r, "err").length === 0, "palla fuori 1,5 s: PID ancora attivo, nessun errore, ok=0");
+  r.run(2500);   // totale 4 s: oltre i 3 s di attesa
+  ok(r.last().run === 1 && r.last().a === 0 && evs(r, "err").length === 0, "palla fuori 4 s: trave orizzontale, PID ancora armato, nessun errore");
+  r.sim.setBallPresent(true); r.sim.setBall(50); r.run(9000);
+  ok(r.last().ok === 1 && r.last().run === 1 && Math.abs(r.last().x - 20) < 1, `palla di nuovo visibile: il PID riprende da solo (x=${r.last().x})`);
+}
+{
+  const r = rig({ x0: 30, length: 70 });
+  r.prog([{ o: "forever", b: [{ o: "say", v: { o: "pos" } }, { o: "wait", v: 0.2 }] }]); r.run(500);
+  r.sim.setBallPresent(false); r.run(3000);
+  ok(r.last().run === 1 && evs(r, "err").length === 0, "programma: palla fuori 3 s -> continua, nessun errore");
+  r.sim.setBallPresent(true); r.run(500);
+  ok(r.last().ok === 1 && r.last().run === 1, "programma: palla di nuovo visibile");
+}
 console.log(fails ? `\n${fails} controlli falliti` : "\ntutti i controlli del simulatore passano");
 process.exit(fails ? 1 : 0);

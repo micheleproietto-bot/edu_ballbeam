@@ -120,6 +120,7 @@
       </div>
       <div class="row" style="margin-top:4px">
         <label><input type="checkbox" id="simMount"> servo montato al contrario</label>
+        <label><input type="checkbox" id="simGone"> palla fuori portata</label>
       </div>
       <div class="hint">Come un vero ball &amp; beam, ma virtuale. Prova a spuntare “servo montato al contrario” e poi correggi con “inverti verso” nella calibrazione.</div>
     </div>
@@ -3921,7 +3922,7 @@ return Blockly.Msg;
 (function (root) {
   "use strict";
   const { createInterp, clampf } = root.BBInterp || require("./interp.js");
-  const HARD_LIMIT = 35, G = 981 /* cm/s^2 */, K_BALL = 5 / 7 /* sfera piena che rotola */;
+  const HOLD_MS = 3000, HARD_LIMIT = 35, G = 981 /* cm/s^2 */, K_BALL = 5 / 7 /* sfera piena che rotola */;
 
   function createSim(opts) {
     const o = Object.assign({ length: 40, x0: null, mountInverted: false, centerOffset: 0, noise: 0.1, friction: 0.5 }, opts);
@@ -3931,7 +3932,7 @@ return Blockly.Msg;
     const cfg = { center: 90, limit: 20, inv: false };
     // --- stato condiviso (come g_* nel firmware)
     const S = { t: 0, pos: 0, posOk: false, sp: 20, angle: 0, pid: false, kp: 2, ki: 0, kd: 1,
-                running: false, tune: false, stopReq: false, lastPing: 0, lastGood: 0, cur: -1 };
+                ballPresent: true, running: false, tune: false, stopReq: false, lastPing: 0, lastGood: 0, cur: -1 };
     let prog = null, gen = null, wakeAt = 0, progLoaded = false;
     // --- mondo fisico
     const P = { x: o.x0 === null ? o.length / 2 : o.x0, v: 0, servoDeg: 90, cmdDeg: 90, theta: 0 };
@@ -3988,24 +3989,24 @@ return Blockly.Msg;
     // ---------- controllo a 50 Hz (porting di controlTask) ----------
     function control() {
       const dt = 0.02;
-      S.pos = Math.max(0.1, Math.round((P.x + (Math.random() - 0.5) * 2 * o.noise) * 10) / 10);
-      S.posOk = true; S.lastGood = S.t;
-      if (S.running && !S.stopReq && !S.posOk) { emit({ e: "err", m: "sensore non valido: stop" }); S.stopReq = true; }
+      if (S.ballPresent) { S.pos = Math.max(0.1, Math.round((P.x + (Math.random() - 0.5) * 2 * o.noise) * 10) / 10); S.lastGood = S.t; }
+      S.posOk = S.t - S.lastGood <= 500;                            // palla fuori portata: NON ferma il programma
+      const age = S.t - S.lastGood;
       if (S.running && !S.stopReq && S.t - S.lastPing > 2000) { emit({ e: "err", m: "connessione persa: stop" }); S.stopReq = true; }
       if (S.stopReq && !S.running) S.stopReq = false;
       let tuneFail = false;                                         // modalità PID: stesse sicurezze del programma
-      if (S.tune && !S.posOk) { emit({ e: "err", m: "sensore non valido: stop" }); tuneFail = true; }
-      else if (S.tune && S.t - S.lastPing > 2000) { emit({ e: "err", m: "connessione persa: stop" }); tuneFail = true; }
+      if (S.tune && S.t - S.lastPing > 2000) { emit({ e: "err", m: "connessione persa: stop" }); tuneFail = true; }
       if (tuneFail) { S.tune = false; S.pid = false; }
-      if (S.pid && S.posOk) {
+      if (S.pid && age <= HOLD_MS) {                                // palla persa: ultima posizione nota per HOLD_MS
         const err = S.sp - S.pos;
-        if (!C.prevPid) { C.integ = 0; C.prevPos = S.pos; C.dFilt = 0; }
+        if (!C.prevPid || C.wasLost) { C.wasLost = false; C.integ = 0; C.prevPos = S.pos; C.dFilt = 0; }
         C.integ = clampf(C.integ + err * dt, -50, 50);
         const dRaw = -(S.pos - C.prevPos) / dt;                     // derivata sulla misura
         C.dFilt += (dt / (0.04 + dt)) * (dRaw - C.dFilt);
         C.prevPos = S.pos;
+        if (age > 100) C.dFilt = 0;                                 // niente campioni nuovi: velocità non nota
         writeServo(S.kp * err + S.ki * C.integ + S.kd * C.dFilt);
-      } else if (S.pid && !S.posOk) writeServo(0);
+      } else if (S.pid) { writeServo(0); C.wasLost = true; }       // persa da più di HOLD_MS: trave orizzontale, riprende da sola
       C.prevPid = S.pid;
       if (S.stopReq) { S.pid = false; writeServo(0); }
       if (tuneFail) writeServo(0);
@@ -4092,6 +4093,7 @@ return Blockly.Msg;
         }
       }
     }
+    S.pos = P.x; S.lastGood = 0;
     control();   // prima misura (il sensore del firmware è pronto in pochi ms)
 
     return {
@@ -4099,6 +4101,7 @@ return Blockly.Msg;
       view: () => ({ x: P.x, theta: P.theta, length: o.length }),
       setBall: (x) => { P.x = clampf(x, 1.5, o.length - 1.5); P.v = 0; },
       setLength: (l) => { o.length = l; P.x = clampf(P.x, 1.5, l - 1.5); },
+      setBallPresent: (b) => { S.ballPresent = !!b; },
       setMountInverted: (b) => { o.mountInverted = !!b; },
     };
   }
@@ -4376,7 +4379,7 @@ function refreshUi() {
   $("connBadge").textContent = connected ? (sim ? "simulazione" : "connesso") : "non connesso"; $("connBadge").className = "badge " + (connected ? "ok" : "");
   $("btnSim").textContent = sim ? "Esci dalla simulazione" : "🧪 Simulazione"; $("btnSim").disabled = connected && !sim; $("btnConnect").disabled = !!sim;
   $("simCard").hidden = !sim;
-  $("sensorBadge").textContent = connected ? (sensorOk ? "sensore OK" : "sensore ?") : "sensore ?";
+  $("sensorBadge").textContent = connected ? (sensorOk ? "sensore OK" : "palla non vista") : "sensore ?";
   $("sensorBadge").className = "badge " + (connected ? (sensorOk ? "ok" : "bad") : "");
   $("btnConnect").textContent = connected ? "Disconnetti" : "Connetti USB";
   $("btnRun").disabled = !connected || running; $("btnStop").disabled = !connected;
@@ -4469,13 +4472,19 @@ function handleLine(line) {
   }
   if (o.x === undefined) return;
   sensorOk = !!o.ok; const wasRunning = running; running = !!o.run;
-  if (wasRunning !== running || $("sensorBadge").textContent !== (sensorOk ? "sensore OK" : "sensore ?")) refreshUi();
+  if (wasRunning !== running || $("sensorBadge").textContent !== (sensorOk ? "sensore OK" : "palla non vista")) refreshUi();
   hist.push({ t:o.t, x:+o.x, sp:+o.sp, a:+o.a, pid:o.pid, ok:o.ok }); if (hist.length > 220) hist.shift();
   $("vPos").textContent = o.ok ? (+o.x).toFixed(1) : "–"; $("vSp").textContent = o.pid ? (+o.sp).toFixed(1) : "–"; $("vAng").textContent = (+o.a).toFixed(1);
   lastSp = o.pid ? +o.sp : null;
   highlight(running && o.s !== undefined ? blockIds[o.s] : null);
+  // palla fuori dal campo del sensore: non è un errore, il firmware continua da solo (ultima posizione nota, poi trave orizzontale)
+  const lost = running && !o.ok;
+  if (lost && !ballLost) { ballLost = true; logLine("La palla è fuori dal campo del sensore: continuo con l'ultima posizione nota.", "info"); }
+  if (lost) say("La palla è fuori dal campo del sensore. Rimettila sulla trave: il programma riprende da solo.");
+  else if (ballLost) { ballLost = false; if ($("msg").className !== "err") say(""); logLine("Palla di nuovo visibile.", "info"); }
   if (pidOn && !running && performance.now() - pidStartedAt > 1500) { pidOn = false; refreshUi(); }   // fermato dalla scheda (sicurezze)
 }
+let ballLost = false;
 let hlId = null, runStart = 0, runUsesServo = false;
 let mode = "pid", pidOn = false, pidDirty = false, pidStartedAt = 0;
 function highlight(id) { id = id || null; if (id === hlId) return; hlId = id; try { ws.highlightBlock(id); } catch (e) {} }
@@ -4549,6 +4558,7 @@ async function run() {
 $("btnConnect").onclick = () => (connected ? disconnect() : connect());
 $("btnSim").onclick = () => (sim ? disconnect() : connectSim());
 $("simBall").oninput = (e) => { if (sim) sim.setBall((e.target.value / 100) * (+$("cLen").value || 70)); };
+$("simGone").onchange = (e) => { if (sim) sim.setBallPresent(!e.target.checked); };
 $("simMount").onchange = (e) => { if (sim) sim.setMountInverted(e.target.checked); };
 // ---------------- modalità PID: parametri regolati dal browser, controllo sull'ESP32 ----------------
 const pidVals = () => ({ sp:+$("sSp").value, kp:+$("sKp").value, ki:+$("sKi").value, kd:+$("sKd").value });

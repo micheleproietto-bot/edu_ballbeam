@@ -267,7 +267,7 @@ function refreshUi() {
   $("connBadge").textContent = connected ? (sim ? "simulazione" : "connesso") : "non connesso"; $("connBadge").className = "badge " + (connected ? "ok" : "");
   $("btnSim").textContent = sim ? "Esci dalla simulazione" : "🧪 Simulazione"; $("btnSim").disabled = connected && !sim; $("btnConnect").disabled = !!sim;
   $("simCard").hidden = !sim;
-  $("sensorBadge").textContent = connected ? (sensorOk ? "sensore OK" : "sensore ?") : "sensore ?";
+  $("sensorBadge").textContent = connected ? (sensorOk ? "sensore OK" : "palla non vista") : "sensore ?";
   $("sensorBadge").className = "badge " + (connected ? (sensorOk ? "ok" : "bad") : "");
   $("btnConnect").textContent = connected ? "Disconnetti" : "Connetti USB";
   $("btnRun").disabled = !connected || running; $("btnStop").disabled = !connected;
@@ -360,13 +360,19 @@ function handleLine(line) {
   }
   if (o.x === undefined) return;
   sensorOk = !!o.ok; const wasRunning = running; running = !!o.run;
-  if (wasRunning !== running || $("sensorBadge").textContent !== (sensorOk ? "sensore OK" : "sensore ?")) refreshUi();
+  if (wasRunning !== running || $("sensorBadge").textContent !== (sensorOk ? "sensore OK" : "palla non vista")) refreshUi();
   hist.push({ t:o.t, x:+o.x, sp:+o.sp, a:+o.a, pid:o.pid, ok:o.ok }); if (hist.length > 220) hist.shift();
   $("vPos").textContent = o.ok ? (+o.x).toFixed(1) : "–"; $("vSp").textContent = o.pid ? (+o.sp).toFixed(1) : "–"; $("vAng").textContent = (+o.a).toFixed(1);
   lastSp = o.pid ? +o.sp : null;
   highlight(running && o.s !== undefined ? blockIds[o.s] : null);
+  // palla fuori dal campo del sensore: non è un errore, il firmware continua da solo (ultima posizione nota, poi trave orizzontale)
+  const lost = running && !o.ok;
+  if (lost && !ballLost) { ballLost = true; logLine("La palla è fuori dal campo del sensore: continuo con l'ultima posizione nota.", "info"); }
+  if (lost) say("La palla è fuori dal campo del sensore. Rimettila sulla trave: il programma riprende da solo.");
+  else if (ballLost) { ballLost = false; if ($("msg").className !== "err") say(""); logLine("Palla di nuovo visibile.", "info"); }
   if (pidOn && !running && performance.now() - pidStartedAt > 1500) { pidOn = false; refreshUi(); }   // fermato dalla scheda (sicurezze)
 }
+let ballLost = false;
 let hlId = null, runStart = 0, runUsesServo = false;
 let mode = "pid", pidOn = false, pidDirty = false, pidStartedAt = 0;
 function highlight(id) { id = id || null; if (id === hlId) return; hlId = id; try { ws.highlightBlock(id); } catch (e) {} }
@@ -440,6 +446,7 @@ async function run() {
 $("btnConnect").onclick = () => (connected ? disconnect() : connect());
 $("btnSim").onclick = () => (sim ? disconnect() : connectSim());
 $("simBall").oninput = (e) => { if (sim) sim.setBall((e.target.value / 100) * (+$("cLen").value || 70)); };
+$("simGone").onchange = (e) => { if (sim) sim.setBallPresent(!e.target.checked); };
 $("simMount").onchange = (e) => { if (sim) sim.setMountInverted(e.target.checked); };
 // ---------------- modalità PID: parametri regolati dal browser, controllo sull'ESP32 ----------------
 const pidVals = () => ({ sp:+$("sSp").value, kp:+$("sKp").value, ki:+$("sKi").value, kd:+$("sKd").value });
