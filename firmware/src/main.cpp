@@ -12,7 +12,8 @@
 #define PIN_SDA   21
 #define PIN_SCL   22
 #define BAUD      115200
-#define FW_VERSION "1.2"
+#define FW_VERSION "1.3"
+#define HOLD_MS   3000        // palla fuori portata: per questo tempo il PID usa l'ultima posizione nota, poi raddrizza la trave
 #define CTRL_MS   5           // periodo del ciclo di controllo (ms)
 #define CTRL_DT   (CTRL_MS / 1000.0f)
 #define RANGE_MS  20          // tempo di misura del sensore (ms): a 10 ms il VL53L4CD non dà misure valide a questa distanza
@@ -125,7 +126,7 @@ static void programTask(void*) {
 static void controlTask(void*) {
   float integ = 0, prevPos = 0, dFilt = 0;
   uint32_t prevSampleMs = 0;
-  bool prevPid = false;
+  bool prevPid = false, wasLost = false;
   TickType_t last = xTaskGetTickCount();
   for (;;) {
     bool newSample = false;
@@ -146,22 +147,21 @@ static void controlTask(void*) {
     }
     if (millis() - g_lastGood > 500) g_posOk = false;
 
-    // sicurezze
-    if (g_running && !g_stopReq && !g_posOk) { sendErr("sensore non valido: stop"); g_stopReq = true; }
+    // sicurezze. La palla fuori portata NON ferma il programma (g_posOk=false basta a segnalarlo alla pagina).
     if (g_running && !g_stopReq && millis() - g_lastPing > 2000) { sendErr("connessione persa: stop"); g_stopReq = true; }
     if (g_stopReq && !g_running) g_stopReq = false;
 
     // modalità PID: stesse sicurezze del programma
     bool tuneFail = false;
-    if (g_tune && !g_posOk) { sendErr("sensore non valido: stop"); tuneFail = true; }
-    else if (g_tune && millis() - g_lastPing > 2000) { sendErr("connessione persa: stop"); tuneFail = true; }
+    if (g_tune && millis() - g_lastPing > 2000) { sendErr("connessione persa: stop"); tuneFail = true; }
 
     xSemaphoreTake(servoMutex, portMAX_DELAY);
     if (tuneFail) { g_tune = false; g_pid = false; }
-    if (g_pid && g_posOk) {
-      float pos = g_pos;
+    uint32_t age = millis() - g_lastGood;               // da quanto non vedo la palla
+    if (g_pid && age <= HOLD_MS) {
+      float pos = g_pos;                                // se la palla è persa: ultima posizione nota
       float err = g_sp - pos;
-      if (!prevPid) { integ = 0; prevPos = pos; prevSampleMs = sampleMs ? sampleMs : g_lastGood; dFilt = 0; }
+      if (!prevPid || wasLost) { wasLost = false; integ = 0; prevPos = pos; prevSampleMs = sampleMs ? sampleMs : g_lastGood; dFilt = 0; }
       if (newSample) {                              // PID aggiornato solo con campioni nuovi
         float dt = (sampleMs - prevSampleMs) / 1000.0f;
         if (dt < 0.004f) dt = CTRL_DT;
@@ -171,9 +171,11 @@ static void controlTask(void*) {
         prevPos = pos;
         prevSampleMs = sampleMs;
       }
+      if (age > 100) dFilt = 0;                         // niente campioni nuovi: la velocità non è più nota
       writeServo(g_kp * err + g_ki * integ + g_kd * dFilt);
-    } else if (g_pid && !g_posOk) {
+    } else if (g_pid) {                                 // palla persa da più di HOLD_MS: trave orizzontale, riprende da sola
       writeServo(0);
+      wasLost = true;
     }
     prevPid = g_pid;
     if (g_stopReq) { g_pid = false; writeServo(0); }
