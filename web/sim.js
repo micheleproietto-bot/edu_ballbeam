@@ -10,7 +10,7 @@
   const HOLD_MS = 3000, HARD_LIMIT = 35, G = 981 /* cm/s^2 */, K_BALL = 5 / 7 /* sfera piena che rotola */;
 
   function createSim(opts) {
-    const o = Object.assign({ length: 40, x0: null, mountInverted: false, centerOffset: 0, noise: 0.1, friction: 0.5 }, opts);
+    const o = Object.assign({ length: 40, x0: null, mountInverted: false, centerOffset: 0, noise: 0.1, friction: 0.5, dN: 4, dTau: 0.07 }, opts);      // come D_SAMPLES / D_TAU del firmware
     const emit = (obj) => { if (o.onLine) o.onLine(JSON.stringify(obj)); };
 
     // --- configurazione (come cfgCenter/cfgLimit/cfgInv nel firmware)
@@ -22,7 +22,7 @@
     // --- mondo fisico
     const P = { x: o.x0 === null ? o.length / 2 : o.x0, v: 0, servoDeg: 90, cmdDeg: 90, theta: 0 };
     // --- stato del task di controllo
-    const C = { integ: 0, prevPos: 0, dFilt: 0, prevPid: false };
+    const C = { integ: 0, prevPos: 0, dFilt: 0, prevPid: false, hist: [] };
 
     // ---------- attuatore ----------
     function writeServo(angle) {
@@ -84,10 +84,11 @@
       if (tuneFail) { S.tune = false; S.pid = false; }
       if (S.pid && age <= HOLD_MS) {                                // palla persa: ultima posizione nota per HOLD_MS
         const err = S.sp - S.pos;
-        if (!C.prevPid || C.wasLost) { C.wasLost = false; C.integ = 0; C.prevPos = S.pos; C.dFilt = 0; }
+        if (!C.prevPid || C.wasLost) { C.wasLost = false; C.integ = 0; C.prevPos = S.pos; C.dFilt = 0; C.hist = [S.pos]; }
         C.integ = clampf(C.integ + err * dt, -50, 50);
-        const dRaw = -(S.pos - C.prevPos) / dt;                     // derivata sulla misura
-        C.dFilt += (dt / (0.04 + dt)) * (dRaw - C.dFilt);
+        C.hist.push(S.pos); if (C.hist.length > o.dN + 1) C.hist.shift();
+        const dRaw = -(S.pos - C.hist[0]) / (dt * (C.hist.length - 1 || 1));   // derivata sulla misura, su dN campioni
+        C.dFilt += (dt / (o.dTau + dt)) * (dRaw - C.dFilt);
         C.prevPos = S.pos;
         if (age > 100) C.dFilt = 0;                                 // niente campioni nuovi: velocità non nota
         writeServo(S.kp * err + S.ki * C.integ + S.kd * C.dFilt);
