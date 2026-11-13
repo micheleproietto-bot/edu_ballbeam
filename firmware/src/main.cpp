@@ -8,7 +8,7 @@
 #include <interp.h>
 
 // ---------- Hardware ----------
-#define PIN_SERVO 18
+#define PIN_SERVO 13
 #define PIN_SDA   21
 #define PIN_SCL   22
 #define BAUD      115200
