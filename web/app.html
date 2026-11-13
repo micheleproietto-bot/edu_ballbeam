@@ -47,9 +47,9 @@
   #pidPanel { position:absolute; inset:0; overflow:auto; background:var(--bg); padding:22px; }
   .pidwrap { max-width:640px; margin:0 auto; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px 22px; }
   .pidwrap h2 { margin:0 0 6px; font-size:18px; }
-  .ctl { display:grid; grid-template-columns:190px 1fr 70px; gap:12px; align-items:center; margin:16px 0; }
+  .ctl { display:grid; grid-template-columns:190px 1fr 96px; gap:12px; align-items:center; margin:16px 0; }
   .ctl label { font-weight:600; } .ctl small { display:block; font-weight:400; color:var(--muted); font-size:12px; }
-  .ctl output { font:600 20px ui-monospace, Consolas, monospace; text-align:right; }
+  .ctl .numv { width:92px; font:600 18px ui-monospace, Consolas, monospace; text-align:right; padding:4px 6px; border:1px solid var(--line); border-radius:6px; }
   .ctl input[type=range] { height:28px; }
   .blocklyHighlighted > .blocklyPath { stroke:#facc15 !important; stroke-width:5px !important; }
   [hidden] { display:none !important; }
@@ -78,14 +78,15 @@
       <div class="pidwrap">
         <h2>Regolatore PID</h2>
         <p class="hint">Il controllo gira sull'ESP32 ad alta frequenza. Qui cambi solo i parametri: la pagina li manda alla scheda circa 10 volte al secondo, anche mentre il PID è in funzione.</p>
-        <div class="ctl"><label>Obiettivo<small>dove portare la palla (cm dal sensore)</small></label><input type="range" id="sSp" min="0" max="70" step="0.5" value="20"><output id="oSp"></output></div>
-        <div class="ctl"><label>P · Kp<small>quanto spinge in base alla distanza dall'obiettivo</small></label><input type="range" id="sKp" min="0" max="10" step="0.05" value="1"><output id="oKp"></output></div>
-        <div class="ctl"><label>I · Ki<small>corregge l'errore che resta a lungo (da usare poco)</small></label><input type="range" id="sKi" min="0" max="3" step="0.01" value="0"><output id="oKi"></output></div>
-        <div class="ctl"><label>D · Kd<small>frena la palla quando corre verso l'obiettivo</small></label><input type="range" id="sKd" min="0" max="2" step="0.01" value="0.3"><output id="oKd"></output></div>
+        <div class="ctl"><label>Obiettivo<small>dove portare la palla (cm dal sensore)</small></label><input type="range" id="sSp" min="0" max="70" step="0.5" value="20"><input type="number" class="numv" id="oSp" step="0.5" min="0"></div>
+        <div class="ctl"><label>P · Kp<small>quanto spinge in base alla distanza dall'obiettivo</small></label><input type="range" id="sKp" min="0" max="10" step="0.01" value="1"><input type="number" class="numv" id="oKp" step="0.01" min="0"></div>
+        <div class="ctl"><label>I · Ki<small>corregge l'errore che resta a lungo (da usare poco)</small></label><input type="range" id="sKi" min="0" max="1" step="0.001" value="0"><input type="number" class="numv" id="oKi" step="0.001" min="0"></div>
+        <div class="ctl"><label>D · Kd<small>frena la palla quando corre verso l'obiettivo</small></label><input type="range" id="sKd" min="0" max="0.5" step="0.001" value="0.05"><input type="number" class="numv" id="oKd" step="0.001" min="0"></div>
         <div class="row" style="margin-top:14px">
           <button id="pidRun" class="go" disabled>▶ AVVIA PID</button>
           <button id="pidStop" class="stop" disabled>■ STOP</button>
         </div>
+        <p class="hint">Puoi scrivere i valori esatti nelle caselle a destra (anche oltre il fondo scala dello slider).</p>
         <p class="hint">Consiglio: parti con I = 0 e D basso. Se la palla oscilla aumenta D o diminuisci P; se è pigra aumenta P. L'angolo massimo della trave è il “Limite ±” della calibrazione.</p>
       </div>
     </div>
@@ -146,7 +147,7 @@
     <div class="card">
       <h2>Calibrazione (insegnante)</h2>
       <div class="row">
-        <label>Centro servo <input type="number" id="cCenter" value="90" min="60" max="120" step="1">°</label>
+        <label>Centro servo <input type="number" id="cCenter" value="91" min="60" max="120" step="1">°</label>
         <label>Limite ± <input type="number" id="cLimit" value="20" min="1" max="35" step="1">°</label>
       </div>
       <div class="row" style="margin-top:6px">

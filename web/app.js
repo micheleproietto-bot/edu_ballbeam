@@ -303,7 +303,7 @@ async function connect() {
   pingTimer = setInterval(() => send({ c:"ping" }), 500);
 }
 function connectSim() {
-  sim = BBSim.createSim({ length: +$("cLen").value || 70, mountInverted: $("simMount").checked, noise: 0.1, onLine: (l) => handleLine(l) });
+  sim = BBSim.createSim({ centerOffset: 1 /* trave orizzontale a 91° */, length: +$("cLen").value || 70, mountInverted: $("simMount").checked, noise: 0.1, onLine: (l) => handleLine(l) });
   sim.setBall(($("simBall").value / 100) * (+$("cLen").value || 70));
   link = { async write(s) { sim.write(s); } };
   connected = true; sensorOk = false; say("");
@@ -450,15 +450,22 @@ $("simGone").onchange = (e) => { if (sim) sim.setBallPresent(!e.target.checked);
 $("simMount").onchange = (e) => { if (sim) sim.setMountInverted(e.target.checked); };
 // ---------------- modalità PID: parametri regolati dal browser, controllo sull'ESP32 ----------------
 const pidVals = () => ({ sp:+$("sSp").value, kp:+$("sKp").value, ki:+$("sKi").value, kd:+$("sKd").value });
+const PIDF = { sSp:["oSp", 1], sKp:["oKp", 2], sKi:["oKi", 3], sKd:["oKd", 3] };   // slider -> [casella numerica, decimali]
 function pidShow() {
-  const v = pidVals();
-  $("oSp").textContent = v.sp.toFixed(1); $("oKp").textContent = v.kp.toFixed(2); $("oKi").textContent = v.ki.toFixed(2); $("oKd").textContent = v.kd.toFixed(2);
+  for (const [sl, [num, dec]] of Object.entries(PIDF)) if (document.activeElement !== $(num)) $(num).value = (+$(sl).value).toFixed(dec);
 }
-for (const id of ["sSp", "sKp", "sKi", "sKd"]) $(id).oninput = () => {
-  pidShow(); pidDirty = true;
-  try { localStorage.setItem("bb_pid", JSON.stringify(pidVals())); } catch (e) {}
-};
-try { const v = JSON.parse(localStorage.getItem("bb_pid") || "null"); if (v) { $("sSp").value = v.sp; $("sKp").value = v.kp; $("sKi").value = v.ki; $("sKd").value = v.kd; } } catch (e) {}
+function pidChanged() { pidDirty = true; try { localStorage.setItem("bb_pid", JSON.stringify(pidVals())); } catch (e) {} }
+for (const [sl, [num]] of Object.entries(PIDF)) {
+  $(sl).oninput = () => { pidShow(); pidChanged(); };
+  $(num).oninput = () => {                                 // valore scritto a mano: allarga lo slider se serve
+    const v = parseFloat($(num).value); if (!isFinite(v) || v < 0) return;
+    if (v > +$(sl).max) $(sl).max = v;
+    $(sl).value = v; pidChanged();
+  };
+  $(num).onblur = pidShow;
+}
+try { const v = JSON.parse(localStorage.getItem("bb_pid") || "null"); if (v) for (const [sl, k] of [["sSp","sp"],["sKp","kp"],["sKi","ki"],["sKd","kd"]]) {
+  if (isFinite(v[k])) { if (v[k] > +$(sl).max) $(sl).max = v[k]; $(sl).value = v[k]; } } } catch (e) {}
 function syncSpRange() { $("sSp").max = Math.max(10, +$("cLen").value || 70); pidShow(); }
 syncSpRange();
 async function runPid() {
@@ -491,11 +498,12 @@ $("btnStop").onclick = () => { stopPid(); };
 $("tryAngle").oninput = (e) => { $("tryVal").textContent = e.target.value; if (!running) send({ c:"angle", v:+e.target.value }); };
 for (const id of ["cCenter", "cLimit", "cInv"]) $(id).onchange = () => {
   const l = Math.min(35, Math.max(1, +$("cLimit").value || 20)); $("cLimit").value = l; $("tryAngle").min = -l; $("tryAngle").max = l;
-  try { localStorage.setItem("bb_cfg", JSON.stringify({ c:$("cCenter").value, l:$("cLimit").value, i:$("cInv").checked, n:$("cLen").value })); } catch (e) {}
+  try { localStorage.setItem("bb_cfg", JSON.stringify({ c:$("cCenter").value, l:$("cLimit").value, i:$("cInv").checked, n:$("cLen").value, m:2 })); } catch (e) {}
   if (connected && !running) send(cfgObj());
 };
 $("cLen").onchange = () => { $("cCenter").onchange(); syncSpRange(); if (sim) sim.setLength(+$("cLen").value || 70); };
-try { const s = JSON.parse(localStorage.getItem("bb_cfg") || "null"); if (s) { $("cCenter").value = s.c; $("cLimit").value = s.l; $("cInv").checked = s.i; $("cLen").value = s.n; $("tryAngle").min = -s.l; $("tryAngle").max = s.l; } } catch (e) {}
+try { const s = JSON.parse(localStorage.getItem("bb_cfg") || "null"); if (s) { $("cCenter").value = (s.m !== 2 && String(s.c) === "90") ? "91" : s.c;   // il centro misurato è 91 (vecchi salvataggi: 90)
+  $("cCenter").value = $("cCenter").value; $("cLimit").value = s.l; $("cInv").checked = s.i; $("cLen").value = s.n; $("tryAngle").min = -s.l; $("tryAngle").max = s.l; } } catch (e) {}
 
 $("level").onchange = (e) => ws.updateToolbox(toolboxFor(+e.target.value));
 (function fillExamples() {
