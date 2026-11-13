@@ -2,6 +2,14 @@
 
 Collegamento: USB seriale, 115200 baud, 8N1. Una riga = un messaggio JSON (terminato da `\n`). Max 12 KB per riga. Annidamento JSON massimo 40 livelli (circa 18 blocchi uno dentro l'altro): oltre, l'ESP32 risponde `JSON non valido`.
 
+## Trasporti
+
+Lo stesso protocollo viaggia su due canali (uno o più client contemporaneamente, i messaggi dell'ESP32 vanno a tutti):
+- **USB seriale** (come sopra).
+- **Wi-Fi**: l'ESP32 si collega alla rete (IP fisso configurato in `firmware/src/secrets.h`, default `192.168.178.200`, hostname `ballbeam.local`). `http://<ip>/` serve la pagina di controllo; **WebSocket `ws://<ip>:81/`**: ogni messaggio di testo è una riga JSON (senza `
+` finale). `GET /health` risponde `ok`. Nessuna autenticazione: va usato solo su una rete di cui ci si fida.
+- `hello` risponde anche con `wifi` (0/1), `ip` e `rssi` quando collegato.
+
 ## Browser → ESP32 (comandi, campo `c`)
 
 | Comando | Esempio | Effetto |

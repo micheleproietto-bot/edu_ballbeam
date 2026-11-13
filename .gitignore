@@ -3,3 +3,5 @@
 node_modules/
 build/
 tests/build/
+firmware/src/secrets.h
+firmware/embed/
