@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ball & Beam a blocchi</title>
+<style>
+  :root { --bg:#f4f6f9; --panel:#fff; --ink:#1d2733; --muted:#6b7785; --line:#dde3ea; --brand:#2563eb;
+          --ok:#16a34a; --bad:#dc2626; --pos:#2563eb; --sp:#9333ea; --ang:#ea580c; }
+  * { box-sizing: border-box; }
+  html, body { height:100%; margin:0; font:15px system-ui, -apple-system, "Segoe UI", sans-serif; color:var(--ink); background:var(--bg); }
+  header { display:flex; align-items:center; gap:12px; padding:8px 14px; background:#16202c; color:#fff; }
+  header h1 { font-size:17px; margin:0; font-weight:600; flex:1; }
+  .badge { padding:3px 10px; border-radius:999px; font-size:13px; background:#2c3a4a; }
+  .badge.ok { background:var(--ok); } .badge.bad { background:var(--bad); }
+  button { font:inherit; border:1px solid var(--line); background:#fff; color:var(--ink); padding:7px 14px; border-radius:8px; cursor:pointer; }
+  button:hover { background:#eef2f7; } button:disabled { opacity:.45; cursor:not-allowed; }
+  button.primary { background:var(--brand); color:#fff; border-color:var(--brand); }
+  button.primary:hover { background:#1d4fd0; }
+  button.go { background:var(--ok); color:#fff; border-color:var(--ok); font-weight:600; font-size:16px; padding:9px 22px; }
+  button.stop { background:var(--bad); color:#fff; border-color:var(--bad); font-weight:600; font-size:16px; padding:9px 22px; }
+  main { display:grid; grid-template-columns:1fr 400px; height:calc(100% - 50px); }
+  #work { position:relative; }
+  #blocklyDiv { position:absolute; inset:0; }
+  aside { background:var(--panel); border-left:1px solid var(--line); padding:12px; overflow:auto; display:flex; flex-direction:column; gap:12px; }
+  .card { border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
+  .card h2 { margin:0 0 8px; font-size:14px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .row label { display:flex; gap:6px; align-items:center; font-size:14px; }
+  input[type=number] { width:70px; padding:5px 6px; border:1px solid var(--line); border-radius:6px; font:inherit; }
+  select { padding:5px 6px; border:1px solid var(--line); border-radius:6px; font:inherit; }
+  canvas { width:100%; height:240px; display:block; }
+  .legend { display:flex; gap:14px; font-size:13px; color:var(--muted); margin-top:4px; }
+  .legend i { display:inline-block; width:12px; height:3px; margin-right:5px; vertical-align:middle; }
+  .vals { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; text-align:center; margin-top:6px; }
+  .vals div { background:var(--bg); border-radius:8px; padding:6px; font-size:12px; color:var(--muted); }
+  .vals b { display:block; font-size:19px; color:var(--ink); font-variant-numeric:tabular-nums; }
+  #log { height:130px; overflow:auto; font:12.5px ui-monospace, Menlo, Consolas, monospace; background:#0f1722; color:#d6e2f0; border-radius:8px; padding:8px; }
+  #log .err { color:#ff8b8b; } #log .info { color:#9ec1ff; }
+  #msg { min-height:20px; font-size:14px; }
+  #msg.err { color:var(--bad); }
+  input[type=range] { width:100%; }
+  .hint { font-size:12.5px; color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚖️ Ball &amp; Beam a blocchi</h1>
+  <label style="font-size:13px">Livello
+    <select id="level" style="margin-left:4px">
+      <option value="1">1 · Primi passi</option>
+      <option value="2">2 · Logica</option>
+      <option value="3" selected>3 · Controllo PID</option>
+    </select>
+  </label>
+  <span id="sensorBadge" class="badge">sensore ?</span>
+  <span id="connBadge" class="badge">non connesso</span>
+  <button id="btnConnect" class="primary">Connetti USB</button>
+</header>
+<main>
+  <div id="work"><div id="blocklyDiv"></div></div>
+  <aside>
+    <div class="row">
+      <button id="btnRun" class="go" disabled>▶ AVVIA</button>
+      <button id="btnStop" class="stop" disabled>■ STOP</button>
+    </div>
+    <div id="msg"></div>
+
+    <div class="card">
+      <h2>Palla in tempo reale</h2>
+      <canvas id="chart"></canvas>
+      <div class="legend">
+        <span><i style="background:var(--pos)"></i>posizione</span>
+        <span><i style="background:var(--sp)"></i>obiettivo</span>
+        <span><i style="background:var(--ang)"></i>angolo trave</span>
+      </div>
+      <div class="vals">
+        <div>Posizione<b id="vPos">–</b>cm</div>
+        <div>Obiettivo<b id="vSp">–</b>cm</div>
+        <div>Angolo<b id="vAng">–</b>gradi</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Messaggi</h2>
+      <div id="log"></div>
+    </div>
+
+    <div class="card">
+      <h2>Programma</h2>
+      <div class="row">
+        <button id="btnExample1">Esempio: tieni la palla</button>
+        <button id="btnExample2">Esempio: due posizioni</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="btnSave">Salva file</button>
+        <button id="btnLoad">Apri file</button>
+        <button id="btnNew">Nuovo</button>
+        <input type="file" id="fileIn" accept=".json" hidden>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Calibrazione (insegnante)</h2>
+      <div class="row">
+        <label>Centro servo <input type="number" id="cCenter" value="90" min="60" max="120" step="1">°</label>
+        <label>Limite ± <input type="number" id="cLimit" value="20" min="1" max="35" step="1">°</label>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <label><input type="checkbox" id="cInv"> inverti verso</label>
+        <label>Trave <input type="number" id="cLen" value="40" min="10" max="150" step="1">cm</label>
+      </div>
+      <div style="margin-top:8px">
+        <div class="hint">Prova trave (solo a programma fermo): <b id="tryVal">0</b>°</div>
+        <input type="range" id="tryAngle" min="-20" max="20" step="1" value="0" disabled>
+      </div>
+      <div class="hint" style="margin-top:6px">Verso giusto: con angolo positivo la palla deve rotolare verso valori di posizione più grandi. Se è il contrario, spunta "inverti verso".</div>
+    </div>
+  </aside>
+</main>
+
+<script>/*__BLOCKLY__*/</script>
+<script>/*__MSG_IT__*/</script>
+<script>/*__INTERP__*/</script>
+<script>/*__APP__*/</script>
+</body>
+</html>
