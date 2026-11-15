@@ -6,8 +6,8 @@ con ESP32 + sensore VL53L4CD + servo, via USB. Interfaccia e messaggi in italian
 | Cartella | Contenuto |
 |---|---|
 | `PROTOCOLLO.md` | Protocollo JSON a righe browser ↔ ESP32 (fonte di verità) |
-| `firmware/` | PlatformIO. `lib/interp/interp.h` = interprete (indipendente dall'hardware), `src/main.cpp` = task di controllo, sicurezze, seriale |
-| `web/` | `app.html` + `app.js` + `interp.js` + `sim.js` → `build.py` → **`ball-beam-blocchi.html`** (file unico, offline) |
+| `firmware/` | PlatformIO. `lib/interp/interp.h` = interprete, `lib/scorer/scorer.h` = punteggio della competizione (indipendenti dall'hardware), `src/main.cpp` = task di controllo, sicurezze, seriale |
+| `web/` | `app.html` + `app.js` + `interp.js` + `scorer.js` + `sim.js` → `build.py` → **`ball-beam-blocchi.html`** (file unico, offline) |
 | `tests/` | Suite dell'interprete (stessi casi su C++ e JS) e scenari del simulatore |
 
 ## Wi-Fi (controllo via web)
@@ -30,7 +30,8 @@ python build.py                                # usa build/node_modules/blockly
 ```
 cd firmware && pio run          # compila e scarica ArduinoJson (serve anche ai test C++)
 node tests/run.js               # interprete: atteso a mano + JS e C++ devono essere identici
-node tests/sim_test.js          # simulatore: protocollo, sicurezze, fisica, PID
+node tests/sim_test.js          # simulatore: protocollo, sicurezze, fisica, PID, competizione
+node tests/scorer_test.js       # punteggio: atteso a mano + JS e C++ identici
 ```
 `run.js` compila `tests/host_runner.cpp` con `CXX` (es. `CXX="python -m ziglang c++"`, oppure g++/clang++).
 Senza compilatore esegue solo la parte JS (`--no-cpp`).
