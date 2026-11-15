@@ -245,6 +245,7 @@ const FRIENDLY = {
   "JSON non valido": "La scheda non ha capito il programma: forse ha troppi blocchi uno dentro l'altro. Prova a semplificarlo.",
   "riga troppo lunga": "Il programma è troppo grande per la scheda: usa meno blocchi.",
   "programma troppo annidato": "Ci sono troppi blocchi uno dentro l'altro: semplifica il programma.",
+  "competizione in corso": "C'è una competizione in corso: i valori sono bloccati fino alla fine (o premi INTERROMPI).",
   "comando sconosciuto": "La scheda non conosce questo comando: il suo software potrebbe essere vecchio.",
 };
 const friendly = (m) => FRIENDLY[m] || m;
@@ -276,6 +277,10 @@ function refreshUi() {
   $("btnRun").disabled = !connected || running; $("btnStop").disabled = !connected;
   $("pidRun").disabled = !connected || running; $("pidStop").disabled = !connected;
   $("tryAngle").disabled = !connected || running;
+  $("compGo").disabled = !connected || running || compOn() || mode !== "pid";
+  const lock = compOn(); $("pidRun").disabled = $("pidRun").disabled || lock; $("btnRun").disabled = $("btnRun").disabled || lock;
+  for (const id of ["sSp","sKp","sKi","sKd","oSp","oKp","oKi","oKd","launchDeg","modePid","modeBlk"]) $(id).disabled = lock;
+  for (const b of document.querySelectorAll(".step")) b.disabled = lock;
 }
 async function sendRaw(str) { await link.write(str); }
 function usbLink() {
@@ -382,6 +387,10 @@ function handleLine(line) {
   if (o.e) {
     if (o.e === "hello") { logLine("ESP32 pronto (fw " + o.fw + ")", "info"); }
     else if (o.e === "err") { logLine("⚠ " + friendly(o.m), "err"); say(friendly(o.m), true); }
+    else if (o.e === "comp_countdown") { logLine("Competizione: conto alla rovescia", "info"); }
+    else if (o.e === "comp_start") { logLine("Competizione: VIA! 60 secondi", "info"); }
+    else if (o.e === "comp_win") { compWin[o.i] = +o.p; logLine("Finestra " + (o.i + 1) + "/10: " + (+o.p).toFixed(2) + " punti", "info"); compDraw(); }
+    else if (o.e === "comp_end") { compEnd(o); }
     else if (o.e === "log") { logLine("→ " + (+o.v).toFixed(2), "info"); }
     else if (o.e === "done") {
     logLine("Programma finito.", "info"); highlight(null);
@@ -392,6 +401,7 @@ function handleLine(line) {
     return;
   }
   if (o.x === undefined) return;
+  compTele(o);
   sensorOk = !!o.ok; const wasRunning = running; running = !!o.run;
   if (wasRunning !== running || $("sensorBadge").textContent !== (sensorOk ? "sensore OK" : "palla non vista")) refreshUi();
   hist.push({ t:o.t, x:+o.x, sp:+o.sp, a:+o.a, pid:o.pid, ok:o.ok }); if (hist.length > 1400) hist.shift();
@@ -554,7 +564,7 @@ for (const b of document.querySelectorAll(".step")) b.onclick = () => {
   if (v > +sl.max) sl.max = v; sl.value = v; sl.oninput();
 };
 window.addEventListener("keydown", (e) => {                // Esc (o Spazio in modalità PID) = STOP
-  if (!connected || /INPUT|SELECT|TEXTAREA/.test((document.activeElement || {}).tagName || "")) return;
+  if (!connected || compOn() || /INPUT|SELECT|TEXTAREA/.test((document.activeElement || {}).tagName || "")) return;
   if (e.key === "Escape" || (e.key === " " && mode === "pid")) { e.preventDefault(); stopPid(); }
 });
 
@@ -619,7 +629,51 @@ async function runPid() {
   await send({ c:"tune", on:1, ...pidVals() });
   logLine("PID avviato: obiettivo " + pidVals().sp + " cm", "info");
 }
-function stopPid() { pidOn = false; send({ c:"stop" }); say(""); highlight(null); }
+function stopPid() {
+  if (compOn() && !confirm("Interrompere la competizione? Resteranno solo i punti già fatti.")) return;
+  pidOn = false; send({ c:"stop" }); say(""); highlight(null);
+}
+// ---------------- competizione: punteggio e conto alla rovescia calcolati dalla scheda ----------------
+var compState = 0, compWin = [], compCur = 0, compPtsLive = 0, compLeftMs = 0;
+function compOn() { return compState === 1 || compState === 2; }
+function boxes(el, vals, cur) {
+  if (el.children.length !== 10) { el.innerHTML = ""; for (let i = 0; i < 10; i++) { const s = document.createElement("span"); s.appendChild(document.createElement("i")); el.appendChild(s); } }
+  for (let i = 0; i < 10; i++) { const s = el.children[i]; s.firstChild.style.width = (vals[i] === undefined ? 0 : Math.round(vals[i] * 100)) + "%"; s.classList.toggle("cur", i === cur); }
+}
+function compDraw() {
+  const secs = Math.ceil(compLeftMs / 1000);
+  $("compBar").hidden = !(compState === 1 || compState === 2);
+  $("compPhase").textContent = compState === 1 ? "Si parte tra" : "Tempo rimasto";
+  $("compTime").textContent = compState === 1 ? Math.max(1, secs) : secs;
+  $("compPts").textContent = compPtsLive.toFixed(1);
+  $("compMsg").textContent = compState === 1 ? "Metti la palla in fondo alla trave (lato opposto al sensore) e lasciala!" : "Tieni la palla vicino all'obiettivo (±2 cm): ogni 6 secondi vale fino a 1 punto.";
+  boxes($("compWins"), compWin, compState === 2 ? compCur : -1);
+}
+function compTele(o) {
+  const cs = o.cs || 0, was = compState;
+  if (cs === 3) { return; }                                // fine gara: ci pensa l'evento comp_end
+  compState = cs; compLeftMs = +o.ct || 0; compPtsLive = +o.cp || 0; compCur = o.cw | 0;
+  if (cs === 1 && was !== 1) { compWin = []; $("compRes").hidden = true; refreshUi(); }
+  if (cs === 0 && was !== 0) refreshUi();
+  if (cs) compDraw();
+}
+function compEnd(o) {
+  compState = 0; compPtsLive = +o.pts; refreshUi(); $("compBar").hidden = true;
+  $("rPts").textContent = (+o.pts).toFixed(1);
+  $("rInfo").innerHTML = (o.abort ? "<b>Competizione interrotta</b> dopo " + Math.round(o.ticks * 0.05) + " s. " : "") +
+    "Obiettivo " + (+o.sp).toFixed(1) + " cm · Kp " + (+o.kp) + " · Ki " + (+o.ki) + " · Kd " + (+o.kd) + "<br>Errore medio " + (+o.mae).toFixed(2) + " cm (a parità di punti vince l'errore più basso)";
+  boxes($("rWins"), o.w, -1); $("compRes").hidden = false;
+  logLine("Competizione " + (o.abort ? "interrotta" : "finita") + ": " + (+o.pts).toFixed(2) + " punti", "info");
+}
+async function runComp() {
+  if (!connected || running || compOn()) return;
+  const v = pidVals(), launch = Math.min(20, Math.max(1, +$("launchDeg").value || 6));
+  if (!confirm("Competizione: conto alla rovescia di 5 s (metti la palla in fondo alla trave, lato opposto al sensore), poi 60 s di gara.\nObiettivo " + v.sp + " cm. Una volta partita non potrai più cambiare i valori. Parto?")) return;
+  say(""); hist.length = 0; pidOn = false; compWin = []; $("compRes").hidden = true;
+  await send(cfgObj()); await new Promise((r) => setTimeout(r, 100));
+  await send({ c:"comp", on:1, ...v, launch:-launch });
+}
+$("compGo").onclick = runComp; $("compAbort").onclick = stopPid; $("rClose").onclick = () => { $("compRes").hidden = true; send({ c:"comp", on:0 }); };
 let pidTick = 0;
 setInterval(() => {                                        // aggiorna i parametri sulla scheda, più lentamente del controllo
   if (!connected || !pidOn) return;

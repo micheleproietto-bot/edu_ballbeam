@@ -17,6 +17,7 @@ parts = {
     "/*__BLOCKLY__*/": read(blk / "blockly.min.js"),   # core + blocchi + generatore JS
     "/*__MSG_IT__*/": read(blk / "msg" / "it.js"),
     "/*__INTERP__*/": read(here / "interp.js") if (here / "interp.js").exists() else "",
+    "/*__SCORER__*/": read(here / "scorer.js"),
     "/*__SIM__*/": read(here / "sim.js"),
     "/*__APP__*/": read(here / "app.js"),
 }

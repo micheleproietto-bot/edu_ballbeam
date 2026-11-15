@@ -97,6 +97,24 @@
   .ctl input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:22px; height:22px; border-radius:50%; background:#fff; border:3px solid var(--c); box-shadow:0 2px 6px rgba(0,0,0,.35); }
   .ctl input[type=range]::-moz-range-thumb { width:16px; height:16px; border-radius:50%; background:#fff; border:3px solid var(--c); box-shadow:0 2px 6px rgba(0,0,0,.35); }
   .ctl input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow:0 0 0 4px color-mix(in srgb, var(--c) 35%, transparent); }
+  /* ---------- competizione ---------- */
+  button.comp { flex:none; font-weight:700; padding:12px 18px; border-radius:14px; border:0; color:#fff; background:linear-gradient(135deg,#f59e0b,#b45309); box-shadow:0 6px 16px rgba(217,119,6,.35); }
+  button.comp:hover { background:linear-gradient(135deg,#fbbf24,#d97706); } button.comp:disabled { box-shadow:none; filter:grayscale(.5); }
+  .launch { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted); white-space:nowrap; }
+  .launch input { width:54px; padding:5px 6px; border:1px solid var(--line); border-radius:8px; background:var(--field); color:var(--ink); font:inherit; }
+  #compBar { display:flex; align-items:center; gap:22px; flex-wrap:wrap; border-color:#f59e0b; background:linear-gradient(100deg,rgba(245,158,11,.14),var(--panel) 60%); }
+  #compBar .big { font-size:54px; font-weight:800; line-height:1; font-variant-numeric:tabular-nums; min-width:2.2ch; text-align:center; }
+  #compBar .lbl { font-size:11.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.09em; font-weight:700; }
+  #compBar .col { display:flex; flex-direction:column; gap:2px; }
+  #compMsg { flex:1; min-width:220px; font-size:17px; font-weight:600; }
+  #compWins { display:flex; gap:4px; width:100%; }
+  #compWins span { flex:1; height:22px; border-radius:6px; background:var(--hover); border:1px solid var(--line); position:relative; overflow:hidden; }
+  #compWins span i { position:absolute; inset:0 auto 0 0; background:linear-gradient(90deg,#22c55e,#16a34a); }
+  #compWins span.cur { outline:2px solid #f59e0b; }
+  #compRes { border-color:#16a34a; }
+  #compRes .score { font-size:64px; font-weight:800; line-height:1; } #compRes .score small { font-size:22px; color:var(--muted); font-weight:600; }
+  #compRes .row2 { display:flex; gap:20px; align-items:center; flex-wrap:wrap; }
+  .locked { opacity:.55; pointer-events:none; }
   .pidactions { display:flex; gap:10px; margin-top:10px; align-items:center; }
   .pidactions .hint { flex:1; }
   .pidactions button { flex:none; min-width:170px; }
@@ -137,6 +155,22 @@
   <div id="work">
     <div id="blocklyDiv"></div>
     <div id="pidPanel">
+      <div class="card" id="compBar" hidden>
+        <div class="col"><span class="lbl" id="compPhase">Gara</span><span class="big" id="compTime">60</span></div>
+        <div class="col"><span class="lbl">Punti</span><span class="big" id="compPts">0.0</span></div>
+        <div id="compMsg"></div>
+        <button id="compAbort" class="stop" style="flex:none;min-width:150px">■ INTERROMPI</button>
+        <div id="compWins"></div>
+      </div>
+      <div class="card" id="compRes" hidden>
+        <h2>Risultato della competizione</h2>
+        <div class="row2">
+          <div class="score"><span id="rPts">0.0</span><small> / 10</small></div>
+          <div id="rInfo" class="hint" style="font-size:15px;flex:1"></div>
+          <button id="rClose" class="go" style="flex:none;min-width:140px">Chiudi</button>
+        </div>
+        <div id="rWins" style="display:flex;gap:4px;margin-top:12px"></div>
+      </div>
       <div id="chartSlot">
         <div class="card chartCard" id="chartCard">
           <div class="tiles">
@@ -176,6 +210,8 @@
         <div class="pidactions">
           <button id="pidRun" class="go" disabled>▶ AVVIA PID</button>
           <button id="pidStop" class="stop" disabled>■ STOP</button>
+          <button id="compGo" class="comp" disabled title="Conto alla rovescia di 5 s, poi 60 s di gara: i valori restano bloccati">🏆 COMPETIZIONE</button>
+          <label class="launch">inclinazione di lancio <input type="number" id="launchDeg" min="1" max="20" step="1" value="6">°</label>
           <span class="hint">Parti con I = 0 e D basso: se la palla oscilla aumenta D o diminuisci P; se è pigra aumenta P. Scorciatoia: <b>Esc</b> o <b>Spazio</b> = STOP.</span>
         </div>
       </div>
@@ -247,6 +283,7 @@
 <script>/*__BLOCKLY__*/</script>
 <script>/*__MSG_IT__*/</script>
 <script>/*__INTERP__*/</script>
+<script>/*__SCORER__*/</script>
 <script>/*__SIM__*/</script>
 <script>/*__APP__*/</script>
 </body>

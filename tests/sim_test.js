@@ -160,5 +160,41 @@ const evs = (r, e) => r.lines.filter((l) => l.e === e);
   r.sim.setBallPresent(true); r.run(500);
   ok(r.last().ok === 1 && r.last().run === 1, "programma: palla di nuovo visibile");
 }
+// Competizione: conto alla rovescia, palla in fondo (cieca), gara 60 s, valori bloccati, punteggio
+{
+  const r = rig({ length: 70, x0: 35, blindBeyond: 62, autoPlace: true });
+  r.send({ c: "hello" });
+  r.send({ c: "comp", on: 1, sp: 30, kp: 2, ki: 0, kd: 1 });
+  r.run(1000);
+  ok(evs(r, "comp_countdown").length === 1 && r.last().cs === 1 && r.last().run === 1 && r.last().ct <= 4100, "competizione: conto alla rovescia partito");
+  ok(r.last().ok === 0 && r.last().a < -3, `competizione: palla in fondo non vista, trave inclinata verso il sensore (a=${r.last().a})`);
+  r.send({ c: "tune", on: 1, sp: 10 });
+  ok(evs(r, "err").some((e) => e.m === "competizione in corso"), "competizione: tune rifiutato");
+  r.send({ c: "run" }); r.send({ c: "cfg", center: 90 });
+  ok(evs(r, "err").length === 3, "competizione: run e cfg rifiutati");
+  r.run(4500);
+  ok(evs(r, "comp_start").length === 1 && r.last().cs === 2, "competizione: gara partita dopo 5 s");
+  r.run(61000);
+  const end = evs(r, "comp_end")[0];
+  ok(end && end.abort === 0 && end.ticks === 1200 && end.w.length === 10, "competizione: fine gara dopo 60 s con 1200 campioni");
+  ok(evs(r, "comp_win").length === 10, "competizione: 10 eventi finestra");
+  ok(end && end.pts >= 5, `competizione: PID stabilizza la palla, punti ${end && end.pts.toFixed(2)} (mae ${end && end.mae.toFixed(2)})`);
+  ok(r.last().cs === 3 && r.last().run === 0 && Math.abs(r.last().a) < 1, "competizione: finita, trave livellata");
+  r.send({ c: "comp", on: 0 }); r.run(200);
+  ok(r.last().cs === undefined, "competizione: chiusura risultati");
+}
+{
+  const r = rig({ length: 70, x0: 35 });
+  r.send({ c: "comp", on: 1, sp: 35, kp: 2, ki: 0, kd: 1 }); r.run(8000);
+  r.send({ c: "stop" }); r.run(300);
+  const end = evs(r, "comp_end");
+  ok(end.length === 1 && end[0].abort === 1 && r.last().run === 0, "competizione: STOP la interrompe (abort=1)");
+}
+{
+  const r = rig({ length: 70, x0: 35 });
+  r.send({ c: "comp", on: 1, sp: 35 }); r.run(7000, false);
+  ok(evs(r, "comp_end").some((e) => e.abort === 1), "competizione: ping perso = interrotta");
+}
+
 console.log(fails ? `\n${fails} controlli falliti` : "\ntutti i controlli del simulatore passano");
 process.exit(fails ? 1 : 0);

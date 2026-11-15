@@ -97,6 +97,24 @@
   .ctl input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:22px; height:22px; border-radius:50%; background:#fff; border:3px solid var(--c); box-shadow:0 2px 6px rgba(0,0,0,.35); }
   .ctl input[type=range]::-moz-range-thumb { width:16px; height:16px; border-radius:50%; background:#fff; border:3px solid var(--c); box-shadow:0 2px 6px rgba(0,0,0,.35); }
   .ctl input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow:0 0 0 4px color-mix(in srgb, var(--c) 35%, transparent); }
+  /* ---------- competizione ---------- */
+  button.comp { flex:none; font-weight:700; padding:12px 18px; border-radius:14px; border:0; color:#fff; background:linear-gradient(135deg,#f59e0b,#b45309); box-shadow:0 6px 16px rgba(217,119,6,.35); }
+  button.comp:hover { background:linear-gradient(135deg,#fbbf24,#d97706); } button.comp:disabled { box-shadow:none; filter:grayscale(.5); }
+  .launch { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted); white-space:nowrap; }
+  .launch input { width:54px; padding:5px 6px; border:1px solid var(--line); border-radius:8px; background:var(--field); color:var(--ink); font:inherit; }
+  #compBar { display:flex; align-items:center; gap:22px; flex-wrap:wrap; border-color:#f59e0b; background:linear-gradient(100deg,rgba(245,158,11,.14),var(--panel) 60%); }
+  #compBar .big { font-size:54px; font-weight:800; line-height:1; font-variant-numeric:tabular-nums; min-width:2.2ch; text-align:center; }
+  #compBar .lbl { font-size:11.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.09em; font-weight:700; }
+  #compBar .col { display:flex; flex-direction:column; gap:2px; }
+  #compMsg { flex:1; min-width:220px; font-size:17px; font-weight:600; }
+  #compWins { display:flex; gap:4px; width:100%; }
+  #compWins span { flex:1; height:22px; border-radius:6px; background:var(--hover); border:1px solid var(--line); position:relative; overflow:hidden; }
+  #compWins span i { position:absolute; inset:0 auto 0 0; background:linear-gradient(90deg,#22c55e,#16a34a); }
+  #compWins span.cur { outline:2px solid #f59e0b; }
+  #compRes { border-color:#16a34a; }
+  #compRes .score { font-size:64px; font-weight:800; line-height:1; } #compRes .score small { font-size:22px; color:var(--muted); font-weight:600; }
+  #compRes .row2 { display:flex; gap:20px; align-items:center; flex-wrap:wrap; }
+  .locked { opacity:.55; pointer-events:none; }
   .pidactions { display:flex; gap:10px; margin-top:10px; align-items:center; }
   .pidactions .hint { flex:1; }
   .pidactions button { flex:none; min-width:170px; }
@@ -137,6 +155,22 @@
   <div id="work">
     <div id="blocklyDiv"></div>
     <div id="pidPanel">
+      <div class="card" id="compBar" hidden>
+        <div class="col"><span class="lbl" id="compPhase">Gara</span><span class="big" id="compTime">60</span></div>
+        <div class="col"><span class="lbl">Punti</span><span class="big" id="compPts">0.0</span></div>
+        <div id="compMsg"></div>
+        <button id="compAbort" class="stop" style="flex:none;min-width:150px">■ INTERROMPI</button>
+        <div id="compWins"></div>
+      </div>
+      <div class="card" id="compRes" hidden>
+        <h2>Risultato della competizione</h2>
+        <div class="row2">
+          <div class="score"><span id="rPts">0.0</span><small> / 10</small></div>
+          <div id="rInfo" class="hint" style="font-size:15px;flex:1"></div>
+          <button id="rClose" class="go" style="flex:none;min-width:140px">Chiudi</button>
+        </div>
+        <div id="rWins" style="display:flex;gap:4px;margin-top:12px"></div>
+      </div>
       <div id="chartSlot">
         <div class="card chartCard" id="chartCard">
           <div class="tiles">
@@ -176,6 +210,8 @@
         <div class="pidactions">
           <button id="pidRun" class="go" disabled>▶ AVVIA PID</button>
           <button id="pidStop" class="stop" disabled>■ STOP</button>
+          <button id="compGo" class="comp" disabled title="Conto alla rovescia di 5 s, poi 60 s di gara: i valori restano bloccati">🏆 COMPETIZIONE</button>
+          <label class="launch">inclinazione di lancio <input type="number" id="launchDeg" min="1" max="20" step="1" value="6">°</label>
           <span class="hint">Parti con I = 0 e D basso: se la palla oscilla aumenta D o diminuisci P; se è pigra aumenta P. Scorciatoia: <b>Esc</b> o <b>Spazio</b> = STOP.</span>
         </div>
       </div>
@@ -3995,6 +4031,37 @@ return Blockly.Msg;
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.BBInterp = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
 </script>
+<script>// Punteggio della competizione — gemello di firmware/lib/scorer/scorer.h (stesse regole, stessi test).
+// 60 s = 10 finestre da 6 s; un campione ogni 50 ms vale "dentro" se la misura è recente e |errore| <= 2 cm.
+// Ogni finestra vale (campioni dentro / 120) punti; totale 0..10.
+(function (root) {
+  "use strict";
+  const f = Math.fround;
+  const WINDOWS = 10, TICKS_PER_WINDOW = 120, TOTAL_TICKS = WINDOWS * TICKS_PER_WINDOW, BAND = f(2.0), UNSEEN_ERR = 35;
+
+  class Scorer {
+    constructor() { this.reset(); }
+    reset() { this.inW = new Array(WINDOWS).fill(0); this.ticks = 0; this.absErr = 0; }
+    done() { return this.ticks >= TOTAL_TICKS; }
+    // ritorna l'indice della finestra appena completata, altrimenti -1
+    tick(valid, err) {
+      if (this.done()) return -1;
+      const w = Math.floor(this.ticks / TICKS_PER_WINDOW);
+      err = f(err);
+      if (valid && err <= BAND) this.inW[w]++;
+      this.absErr += valid ? err : UNSEEN_ERR;
+      this.ticks++;
+      return this.ticks % TICKS_PER_WINDOW === 0 ? w : -1;
+    }
+    windowPoints(w) { return f(this.inW[w] / TICKS_PER_WINDOW); }
+    points() { let s = 0; for (let w = 0; w < WINDOWS; w++) s = f(s + this.windowPoints(w)); return s; }
+    mae() { return this.ticks ? f(this.absErr / this.ticks) : 0; }
+  }
+
+  const api = { Scorer, WINDOWS, TICKS_PER_WINDOW, TOTAL_TICKS, BAND, UNSEEN_ERR };
+  if (typeof module !== "undefined" && module.exports) module.exports = api; else root.BBScorer = api;
+})(typeof globalThis !== "undefined" ? globalThis : this);
+</script>
 <script>// Dispositivo simulato: parla lo stesso protocollo dell'ESP32 (PROTOCOLLO.md) e fa girare lo stesso
 // interprete (interp.js). Contiene un porting JS della logica di firmware/src/main.cpp
 // (comandi, sicurezze, PID a 50 Hz) e una palla virtuale sulla trave.
@@ -4004,17 +4071,25 @@ return Blockly.Msg;
 (function (root) {
   "use strict";
   const { createInterp, clampf } = root.BBInterp || require("./interp.js");
+  const { Scorer } = root.BBScorer || require("./scorer.js");
+  const COMP_COUNTDOWN_MS = 5000, COMP_RUN_MS = 60000, COMP_TICK_MS = 50, COMP_LAUNCH_DEG = -6;   // come nel firmware
   const HOLD_MS = 3000, HARD_LIMIT = 35, G = 981 /* cm/s^2 */, K_BALL = 5 / 7 /* sfera piena che rotola */;
 
   function createSim(opts) {
-    const o = Object.assign({ length: 40, x0: null, mountInverted: false, centerOffset: 0, noise: 0.1, friction: 0.5, dN: 4, dTau: 0.07 }, opts);      // come D_SAMPLES / D_TAU del firmware
+    const o = Object.assign({ length: 40, x0: null, mountInverted: false, centerOffset: 0, noise: 0.1, friction: 0.5, dN: 4, dTau: 0.07, blindBeyond: null, autoPlace: false }, opts);
+    // blindBeyond: oltre questa posizione (cm) il sensore non vede la palla (come in fondo alla trave reale)
+    // autoPlace: nella competizione la palla viene messa in fondo da sola durante il conto alla rovescia      // come D_SAMPLES / D_TAU del firmware
     const emit = (obj) => { if (o.onLine) o.onLine(JSON.stringify(obj)); };
 
     // --- configurazione (come cfgCenter/cfgLimit/cfgInv nel firmware)
     const cfg = { center: 90, limit: 20, inv: false };
     // --- stato condiviso (come g_* nel firmware)
     const S = { t: 0, pos: 0, posOk: false, sp: 20, angle: 0, pid: false, kp: 2, ki: 0, kd: 1,
-                ballPresent: true, running: false, tune: false, stopReq: false, lastPing: 0, lastGood: 0, cur: -1 };
+                ballPresent: true, running: false, tune: false, stopReq: false, lastPing: 0, lastGood: 0, cur: -1,
+                comp: 0, compAborted: false, compPts: 0, compWin: 0, compLeft: 0, holdBall: false };
+    let compLaunch = COMP_LAUNCH_DEG, compT0 = 0, compTick = 0, compArmed = false;
+    const scorer = new Scorer();
+    const compActive = () => S.comp === 1 || S.comp === 2;
     let prog = null, gen = null, wakeAt = 0, progLoaded = false;
     // --- mondo fisico
     const P = { x: o.x0 === null ? o.length / 2 : o.x0, v: 0, servoDeg: 90, cmdDeg: 90, theta: 0 };
@@ -4030,6 +4105,11 @@ return Blockly.Msg;
       P.cmdDeg = Math.round(clampf(cfg.center + (cfg.inv ? -angle : angle), 0, 180));
     }
     function setManual(angle) { S.pid = false; writeServo(angle); }
+    function compFinish(aborted) { S.comp = 3; S.compAborted = aborted; S.pid = false; S.compLeft = 0; S.holdBall = false; writeServo(0); }
+    function sendCompEnd() {
+      emit({ e: "comp_end", abort: S.compAborted ? 1 : 0, pts: scorer.points(), mae: scorer.mae(), ticks: scorer.ticks,
+             w: Array.from({ length: 10 }, (_, i) => scorer.windowPoints(i)), sp: S.sp, kp: S.kp, ki: S.ki, kd: S.kd });
+    }
 
     // ---------- interprete ----------
     const host = {
@@ -4061,6 +4141,7 @@ return Blockly.Msg;
       const d = P.cmdDeg - P.servoDeg;
       P.servoDeg += Math.abs(d) <= maxMove ? d : Math.sign(d) * maxMove;
       P.theta = (o.mountInverted ? -1 : 1) * (P.servoDeg - (90 + o.centerOffset));   // gradi; >0: la palla va verso x grandi
+      if (S.holdBall) { P.v = 0; return; }                         // la palla è tenuta a mano (conto alla rovescia)
       const a = K_BALL * G * Math.sin(P.theta * Math.PI / 180) - o.friction * P.v;
       P.v += a * dt; P.x += P.v * dt;
       const lo = 1.5, hi = o.length - 1.5;
@@ -4071,7 +4152,8 @@ return Blockly.Msg;
     // ---------- controllo a 50 Hz (porting di controlTask) ----------
     function control() {
       const dt = 0.02;
-      if (S.ballPresent) { S.pos = Math.max(0.1, Math.round((P.x + (Math.random() - 0.5) * 2 * o.noise) * 10) / 10); S.lastGood = S.t; }
+      const seen = S.ballPresent && !(o.blindBeyond !== null && P.x > o.blindBeyond);
+      if (seen) { S.pos = Math.max(0.1, Math.round((P.x + (Math.random() - 0.5) * 2 * o.noise) * 10) / 10); S.lastGood = S.t; }
       S.posOk = S.t - S.lastGood <= 500;                            // palla fuori portata: NON ferma il programma
       const age = S.t - S.lastGood;
       if (S.running && !S.stopReq && S.t - S.lastPing > 2000) { emit({ e: "err", m: "connessione persa: stop" }); S.stopReq = true; }
@@ -4079,6 +4161,27 @@ return Blockly.Msg;
       let tuneFail = false;                                         // modalità PID: stesse sicurezze del programma
       if (S.tune && S.t - S.lastPing > 2000) { emit({ e: "err", m: "connessione persa: stop" }); tuneFail = true; }
       if (tuneFail) { S.tune = false; S.pid = false; }
+      let compHold = false;
+      if (compActive() && S.t - S.lastPing > 2000) { emit({ e: "err", m: "connessione persa: stop" }); compFinish(true); sendCompEnd(); }
+      if (S.comp === 1) {                                           // conto alla rovescia: trave inclinata verso il sensore, PID spento
+        const el = S.t - compT0;
+        if (o.autoPlace && el >= COMP_COUNTDOWN_MS - 1000) S.holdBall = false;   // la palla viene lasciata 1 s prima del via
+        if (el >= COMP_COUNTDOWN_MS) {
+          S.comp = 2; compT0 = S.t; compTick = 0; compArmed = false; scorer.reset(); S.compPts = 0; S.compWin = 0; S.holdBall = false; emit({ e: "comp_start" });
+        } else { S.compLeft = COMP_COUNTDOWN_MS - el; S.pid = false; compHold = true; }
+      }
+      if (S.comp === 2) {
+        const el = S.t - compT0, closed = [];
+        while (!scorer.done() && compTick < Math.floor(el / COMP_TICK_MS)) {
+          const w = scorer.tick(age <= 100, Math.abs(Math.fround(S.sp - S.pos))); compTick++;
+          if (w >= 0) closed.push(w);
+        }
+        S.compPts = scorer.points(); S.compWin = Math.min(9, Math.floor(scorer.ticks / 120));
+        S.compLeft = el >= COMP_RUN_MS ? 0 : COMP_RUN_MS - el;
+        if (!compArmed) { if (age <= 100) { compArmed = true; S.pid = true; } else { S.pid = false; compHold = true; } }
+        for (const w of closed) emit({ e: "comp_win", i: w, p: scorer.windowPoints(w) });
+        if (el >= COMP_RUN_MS) { compFinish(false); sendCompEnd(); }
+      }
       if (S.pid && age <= HOLD_MS) {                                // palla persa: ultima posizione nota per HOLD_MS
         const err = S.sp - S.pos;
         if (!C.prevPid || C.wasLost) { C.wasLost = false; C.integ = 0; C.prevPos = S.pos; C.dFilt = 0; C.hist = [S.pos]; }
@@ -4093,6 +4196,7 @@ return Blockly.Msg;
       C.prevPid = S.pid;
       if (S.stopReq) { S.pid = false; writeServo(0); }
       if (tuneFail) writeServo(0);
+      if (compHold && S.comp !== 3) writeServo(compLaunch);
     }
 
     // ---------- comandi (porting di handleLine) ----------
@@ -4112,17 +4216,20 @@ return Blockly.Msg;
         case "hello": emit({ e: "hello", v: 1, fw: "sim", ok: S.posOk ? 1 : 0, limit: cfg.limit }); break;
         case "ping": break;
         case "cfg":
+          if (compActive()) return emit({ e: "err", m: "competizione in corso" });
           if (S.running || S.tune) return emit({ e: "err", m: "ferma il programma prima" });
           if (typeof d.center === "number") cfg.center = clampf(d.center, 60, 120);
           if (typeof d.limit === "number") cfg.limit = clampf(d.limit, 1, HARD_LIMIT);
           if (d.inv !== undefined && d.inv !== null) cfg.inv = Number(d.inv) !== 0;
           setManual(0); emit({ e: "ok" }); break;
         case "prog":
+          if (compActive()) return emit({ e: "err", m: "competizione in corso" });
           if (S.running) return emit({ e: "err", m: "programma in esecuzione" });
           prog = d.p; progLoaded = prog !== undefined && prog !== null;
           if (progLoaded) emit({ e: "ok" }); else emit({ e: "err", m: "programma vuoto" });
           break;
         case "tune":                                                 // {"c":"tune","on":1,"sp":..,"kp":..,"ki":..,"kd":..}
+          if (compActive()) return emit({ e: "err", m: "competizione in corso" });   // durante la gara i valori sono bloccati
           if (S.running) return emit({ e: "err", m: "ferma il programma prima" });
           if (typeof d.sp === "number") S.sp = clampf(d.sp, 0, 100);
           if (typeof d.kp === "number") S.kp = clampf(d.kp, 0, 50);
@@ -4135,7 +4242,28 @@ return Blockly.Msg;
             } else { S.tune = false; S.pid = false; writeServo(0); }
           }
           break;
+        case "comp":                                                 // {"c":"comp","on":1,"sp":..,"kp":..,"ki":..,"kd":..,"launch":-6}
+          if (!(d.on === undefined || Number(d.on) !== 0)) {
+            if (compActive()) { compFinish(true); sendCompEnd(); }
+            S.comp = 0;
+          } else {
+            if (S.running) return emit({ e: "err", m: "ferma il programma prima" });
+            if (compActive()) return emit({ e: "err", m: "competizione in corso" });
+            if (typeof d.sp === "number") S.sp = clampf(d.sp, 0, 100);
+            if (typeof d.kp === "number") S.kp = clampf(d.kp, 0, 50);
+            if (typeof d.ki === "number") S.ki = clampf(d.ki, 0, 20);
+            if (typeof d.kd === "number") S.kd = clampf(d.kd, 0, 20);
+            compLaunch = typeof d.launch === "number" ? clampf(d.launch, -HARD_LIMIT, 0) : COMP_LAUNCH_DEG;   // sempre verso il sensore
+            S.tune = false; S.stopReq = false; S.pid = false;
+            scorer.reset(); S.compPts = 0; S.compWin = 0; S.compAborted = false; compTick = 0; compArmed = false;
+            compT0 = S.t; S.compLeft = COMP_COUNTDOWN_MS; S.comp = 1;
+            if (o.autoPlace) { P.x = o.length - 1.5; P.v = 0; S.holdBall = true; }
+            writeServo(compLaunch);
+            emit({ e: "comp_countdown" });
+          }
+          break;
         case "run":
+          if (compActive()) return emit({ e: "err", m: "competizione in corso" });
           if (S.running) return emit({ e: "err", m: "già in esecuzione" });
           if (!progLoaded) return emit({ e: "err", m: "nessun programma" });
           if (!S.posOk) return emit({ e: "err", m: "sensore non valido" });
@@ -4143,10 +4271,11 @@ return Blockly.Msg;
           S.cur = -1; gen = interp.run(prog); wakeAt = S.t;
           break;
         case "stop":
+          if (compActive()) { compFinish(true); sendCompEnd(); }
           S.stopReq = true;
           if (!S.running) { S.tune = false; setManual(0); S.stopReq = false; }
           break;
-        case "angle": if (!S.running && !S.tune) setManual(typeof d.v === "number" ? d.v : 0); break;
+        case "angle": if (!S.running && !S.tune && !compActive()) setManual(typeof d.v === "number" ? d.v : 0); break;
         default: emit({ e: "err", m: "comando sconosciuto" });
       }
     }
@@ -4170,8 +4299,9 @@ return Blockly.Msg;
         if (S.t % 20 === 0) control();
         advanceProgram();
         if (S.t % 50 === 0) {
-          const m = { t: S.t, x: +S.pos.toFixed(1), sp: S.sp, a: +S.angle.toFixed(1), run: (S.running || S.tune) ? 1 : 0, pid: S.pid ? 1 : 0, ok: S.posOk ? 1 : 0 };
+          const m = { t: S.t, x: +S.pos.toFixed(1), sp: S.sp, a: +S.angle.toFixed(1), run: (S.running || S.tune || compActive()) ? 1 : 0, pid: S.pid ? 1 : 0, ok: S.posOk ? 1 : 0 };
           if (S.running && S.cur >= 0) m.s = S.cur;
+          if (S.comp) { m.cs = S.comp; m.ct = S.compLeft; m.cp = +S.compPts.toFixed(2); m.cw = S.compWin; }
           emit(m);
         }
       }
@@ -4440,6 +4570,7 @@ const FRIENDLY = {
   "JSON non valido": "La scheda non ha capito il programma: forse ha troppi blocchi uno dentro l'altro. Prova a semplificarlo.",
   "riga troppo lunga": "Il programma è troppo grande per la scheda: usa meno blocchi.",
   "programma troppo annidato": "Ci sono troppi blocchi uno dentro l'altro: semplifica il programma.",
+  "competizione in corso": "C'è una competizione in corso: i valori sono bloccati fino alla fine (o premi INTERROMPI).",
   "comando sconosciuto": "La scheda non conosce questo comando: il suo software potrebbe essere vecchio.",
 };
 const friendly = (m) => FRIENDLY[m] || m;
@@ -4471,6 +4602,10 @@ function refreshUi() {
   $("btnRun").disabled = !connected || running; $("btnStop").disabled = !connected;
   $("pidRun").disabled = !connected || running; $("pidStop").disabled = !connected;
   $("tryAngle").disabled = !connected || running;
+  $("compGo").disabled = !connected || running || compOn() || mode !== "pid";
+  const lock = compOn(); $("pidRun").disabled = $("pidRun").disabled || lock; $("btnRun").disabled = $("btnRun").disabled || lock;
+  for (const id of ["sSp","sKp","sKi","sKd","oSp","oKp","oKi","oKd","launchDeg","modePid","modeBlk"]) $(id).disabled = lock;
+  for (const b of document.querySelectorAll(".step")) b.disabled = lock;
 }
 async function sendRaw(str) { await link.write(str); }
 function usbLink() {
@@ -4577,6 +4712,10 @@ function handleLine(line) {
   if (o.e) {
     if (o.e === "hello") { logLine("ESP32 pronto (fw " + o.fw + ")", "info"); }
     else if (o.e === "err") { logLine("⚠ " + friendly(o.m), "err"); say(friendly(o.m), true); }
+    else if (o.e === "comp_countdown") { logLine("Competizione: conto alla rovescia", "info"); }
+    else if (o.e === "comp_start") { logLine("Competizione: VIA! 60 secondi", "info"); }
+    else if (o.e === "comp_win") { compWin[o.i] = +o.p; logLine("Finestra " + (o.i + 1) + "/10: " + (+o.p).toFixed(2) + " punti", "info"); compDraw(); }
+    else if (o.e === "comp_end") { compEnd(o); }
     else if (o.e === "log") { logLine("→ " + (+o.v).toFixed(2), "info"); }
     else if (o.e === "done") {
     logLine("Programma finito.", "info"); highlight(null);
@@ -4587,6 +4726,7 @@ function handleLine(line) {
     return;
   }
   if (o.x === undefined) return;
+  compTele(o);
   sensorOk = !!o.ok; const wasRunning = running; running = !!o.run;
   if (wasRunning !== running || $("sensorBadge").textContent !== (sensorOk ? "sensore OK" : "palla non vista")) refreshUi();
   hist.push({ t:o.t, x:+o.x, sp:+o.sp, a:+o.a, pid:o.pid, ok:o.ok }); if (hist.length > 1400) hist.shift();
@@ -4749,7 +4889,7 @@ for (const b of document.querySelectorAll(".step")) b.onclick = () => {
   if (v > +sl.max) sl.max = v; sl.value = v; sl.oninput();
 };
 window.addEventListener("keydown", (e) => {                // Esc (o Spazio in modalità PID) = STOP
-  if (!connected || /INPUT|SELECT|TEXTAREA/.test((document.activeElement || {}).tagName || "")) return;
+  if (!connected || compOn() || /INPUT|SELECT|TEXTAREA/.test((document.activeElement || {}).tagName || "")) return;
   if (e.key === "Escape" || (e.key === " " && mode === "pid")) { e.preventDefault(); stopPid(); }
 });
 
@@ -4814,7 +4954,51 @@ async function runPid() {
   await send({ c:"tune", on:1, ...pidVals() });
   logLine("PID avviato: obiettivo " + pidVals().sp + " cm", "info");
 }
-function stopPid() { pidOn = false; send({ c:"stop" }); say(""); highlight(null); }
+function stopPid() {
+  if (compOn() && !confirm("Interrompere la competizione? Resteranno solo i punti già fatti.")) return;
+  pidOn = false; send({ c:"stop" }); say(""); highlight(null);
+}
+// ---------------- competizione: punteggio e conto alla rovescia calcolati dalla scheda ----------------
+var compState = 0, compWin = [], compCur = 0, compPtsLive = 0, compLeftMs = 0;
+function compOn() { return compState === 1 || compState === 2; }
+function boxes(el, vals, cur) {
+  if (el.children.length !== 10) { el.innerHTML = ""; for (let i = 0; i < 10; i++) { const s = document.createElement("span"); s.appendChild(document.createElement("i")); el.appendChild(s); } }
+  for (let i = 0; i < 10; i++) { const s = el.children[i]; s.firstChild.style.width = (vals[i] === undefined ? 0 : Math.round(vals[i] * 100)) + "%"; s.classList.toggle("cur", i === cur); }
+}
+function compDraw() {
+  const secs = Math.ceil(compLeftMs / 1000);
+  $("compBar").hidden = !(compState === 1 || compState === 2);
+  $("compPhase").textContent = compState === 1 ? "Si parte tra" : "Tempo rimasto";
+  $("compTime").textContent = compState === 1 ? Math.max(1, secs) : secs;
+  $("compPts").textContent = compPtsLive.toFixed(1);
+  $("compMsg").textContent = compState === 1 ? "Metti la palla in fondo alla trave (lato opposto al sensore) e lasciala!" : "Tieni la palla vicino all'obiettivo (±2 cm): ogni 6 secondi vale fino a 1 punto.";
+  boxes($("compWins"), compWin, compState === 2 ? compCur : -1);
+}
+function compTele(o) {
+  const cs = o.cs || 0, was = compState;
+  if (cs === 3) { return; }                                // fine gara: ci pensa l'evento comp_end
+  compState = cs; compLeftMs = +o.ct || 0; compPtsLive = +o.cp || 0; compCur = o.cw | 0;
+  if (cs === 1 && was !== 1) { compWin = []; $("compRes").hidden = true; refreshUi(); }
+  if (cs === 0 && was !== 0) refreshUi();
+  if (cs) compDraw();
+}
+function compEnd(o) {
+  compState = 0; compPtsLive = +o.pts; refreshUi(); $("compBar").hidden = true;
+  $("rPts").textContent = (+o.pts).toFixed(1);
+  $("rInfo").innerHTML = (o.abort ? "<b>Competizione interrotta</b> dopo " + Math.round(o.ticks * 0.05) + " s. " : "") +
+    "Obiettivo " + (+o.sp).toFixed(1) + " cm · Kp " + (+o.kp) + " · Ki " + (+o.ki) + " · Kd " + (+o.kd) + "<br>Errore medio " + (+o.mae).toFixed(2) + " cm (a parità di punti vince l'errore più basso)";
+  boxes($("rWins"), o.w, -1); $("compRes").hidden = false;
+  logLine("Competizione " + (o.abort ? "interrotta" : "finita") + ": " + (+o.pts).toFixed(2) + " punti", "info");
+}
+async function runComp() {
+  if (!connected || running || compOn()) return;
+  const v = pidVals(), launch = Math.min(20, Math.max(1, +$("launchDeg").value || 6));
+  if (!confirm("Competizione: conto alla rovescia di 5 s (metti la palla in fondo alla trave, lato opposto al sensore), poi 60 s di gara.\nObiettivo " + v.sp + " cm. Una volta partita non potrai più cambiare i valori. Parto?")) return;
+  say(""); hist.length = 0; pidOn = false; compWin = []; $("compRes").hidden = true;
+  await send(cfgObj()); await new Promise((r) => setTimeout(r, 100));
+  await send({ c:"comp", on:1, ...v, launch:-launch });
+}
+$("compGo").onclick = runComp; $("compAbort").onclick = stopPid; $("rClose").onclick = () => { $("compRes").hidden = true; send({ c:"comp", on:0 }); };
 let pidTick = 0;
 setInterval(() => {                                        // aggiorna i parametri sulla scheda, più lentamente del controllo
   if (!connected || !pidOn) return;
