@@ -4914,7 +4914,7 @@ async function run() {
 $("btnConnect").onclick = () => (connected ? disconnect() : connect());
 $("btnWifi").onclick = () => {
   if (connected) return disconnect();
-  let host = "192.168.178.200"; try { host = localStorage.getItem("bb_host") || host; } catch (e) {}
+  let host = "ballbeam.local"; try { host = localStorage.getItem("bb_host") || host; } catch (e) {}
   host = (prompt("Indirizzo della scheda (Wi-Fi):", host) || "").trim(); if (!host) return;
   try { localStorage.setItem("bb_host", host); } catch (e) {}
   connectWs(host);

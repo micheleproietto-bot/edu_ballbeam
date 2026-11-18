@@ -6,7 +6,7 @@ Collegamento: USB seriale, 115200 baud, 8N1. Una riga = un messaggio JSON (termi
 
 Lo stesso protocollo viaggia su due canali (uno o più client contemporaneamente, i messaggi dell'ESP32 vanno a tutti):
 - **USB seriale** (come sopra).
-- **Wi-Fi**: l'ESP32 si collega alla rete (IP fisso configurato in `firmware/src/secrets.h`, default `192.168.178.200`, hostname `ballbeam.local`). `http://<ip>/` serve la pagina di controllo; **WebSocket `ws://<ip>:81/`**: ogni messaggio di testo è una riga JSON (senza `
+- **Wi-Fi**: l'ESP32 si collega alla rete (IP assegnato dalla rete via DHCP; fisso solo se `WIFI_IP` è definito in `firmware/src/secrets.h`; hostname `ballbeam.local`). `http://<ip>/` serve la pagina di controllo; **WebSocket `ws://<ip>:81/`**: ogni messaggio di testo è una riga JSON (senza `
 ` finale). `GET /health` risponde `ok`. Nessuna autenticazione: va usato solo su una rete di cui ci si fida.
 - `hello` risponde anche con `wifi` (0/1), `ip` e `rssi` quando collegato.
 

@@ -11,9 +11,9 @@ con ESP32 + sensore VL53L4CD + servo, via USB. Interfaccia e messaggi in italian
 | `tests/` | Suite dell'interprete (stessi casi su C++ e JS) e scenari del simulatore |
 
 ## Wi-Fi (controllo via web)
-1. `cp firmware/src/secrets.example.h firmware/src/secrets.h` e inserisci SSID, password e IP fisso (il file è escluso da git).
+1. `cp firmware/src/secrets.example.h firmware/src/secrets.h` e inserisci SSID, password e, se vuoi, un IP fisso (senza, la scheda usa il DHCP; il file è escluso da git).
 2. `cd web && python build.py` (la pagina viene incorporata, compressa, nel firmware), poi `cd ../firmware && pio run -t upload`.
-3. Dal computer sulla stessa rete apri `http://192.168.178.200/` (o `http://ballbeam.local/`): la pagina si collega da sola.
+3. Dal computer sulla stessa rete apri `http://ballbeam.local/` (o l'indirizzo assegnato dalla rete, visibile nell'evento `wifi`): la pagina si collega da sola.
    Anche dal file locale: pulsante **Wi-Fi**. Senza `secrets.h` il firmware funziona solo via USB.
 Prova senza scheda: `node tests/fake_esp.js` e apri `http://localhost:8080`.
 

@@ -404,7 +404,9 @@ static void wifiStart() {
   WiFi.mode(WIFI_STA);
   WiFi.setHostname("ballbeam");
   WiFi.setSleep(false);                              // niente risparmio energetico: latenza minima
+#ifdef WIFI_IP                                      // senza WIFI_IP in secrets.h: indirizzo assegnato dalla rete (DHCP), es. hotspot del telefono
   WiFi.config(IPAddress(WIFI_IP), IPAddress(WIFI_GW), IPAddress(WIFI_MASK), IPAddress(WIFI_GW));
+#endif
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
 }
