@@ -141,7 +141,8 @@ static void sendCompEnd() {
   d["e"] = "comp_end"; d["abort"] = g_compAborted ? 1 : 0;
   d["pts"] = scorer.points(); d["mae"] = scorer.mae(); d["ticks"] = scorer.ticks;
   JsonArray w = d["w"].to<JsonArray>();
-  for (int i = 0; i < bb::Scorer::WINDOWS; i++) w.add(scorer.windowPoints(i));
+  JsonArray wf = d["wf"].to<JsonArray>();
+  for (int i = 0; i < bb::Scorer::WINDOWS; i++) { w.add(scorer.windowPoints(i)); wf.add(scorer.windowFill(i)); }
   d["sp"] = g_sp; d["kp"] = g_kp; d["ki"] = g_ki; d["kd"] = g_kd;
   sendDoc(d);
 }
@@ -293,7 +294,10 @@ static void controlTask(void*) {
     xSemaphoreGive(servoMutex);
     if (evStart) sendEv("comp_start");
     if (evTuneStart) sendEv("tune_start");
-    if (evWin >= 0) { JsonDocument w; w["e"] = "comp_win"; w["i"] = evWin; w["p"] = scorer.windowPoints(evWin); sendDoc(w); }
+    if (evWin >= 0) {
+      JsonDocument w; w["e"] = "comp_win"; w["i"] = evWin;
+      w["p"] = scorer.windowPoints(evWin); w["f"] = scorer.windowFill(evWin); sendDoc(w);
+    }
     if (evEnd) sendCompEnd();
 
     vTaskDelayUntil(&last, pdMS_TO_TICKS(CTRL_MS));

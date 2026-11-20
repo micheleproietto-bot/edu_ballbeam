@@ -4032,12 +4032,12 @@ return Blockly.Msg;
 })(typeof globalThis !== "undefined" ? globalThis : this);
 </script>
 <script>// Punteggio della competizione — gemello di firmware/lib/scorer/scorer.h (stesse regole, stessi test).
-// 60 s = 10 finestre da 6 s; un campione ogni 50 ms vale "dentro" se la misura è recente e |errore| <= 7 cm.
-// Ogni finestra vale (campioni dentro / 120) punti; totale 0..10.
+// 60 s = 10 finestre da 6 s; un campione ogni 50 ms vale "dentro" se la misura è recente e |errore| <= 6 cm.
+// Ogni finestra vale fino a 2.5 punti; il totale è limitato a 10.
 (function (root) {
   "use strict";
   const f = Math.fround;
-  const WINDOWS = 10, TICKS_PER_WINDOW = 120, TOTAL_TICKS = WINDOWS * TICKS_PER_WINDOW, BAND = f(7.0), UNSEEN_ERR = 35;
+  const WINDOWS = 10, TICKS_PER_WINDOW = 120, TOTAL_TICKS = WINDOWS * TICKS_PER_WINDOW, BAND = f(6.0), UNSEEN_ERR = 35;
 
   class Scorer {
     constructor() { this.reset(); }
@@ -4053,8 +4053,9 @@ return Blockly.Msg;
       this.ticks++;
       return this.ticks % TICKS_PER_WINDOW === 0 ? w : -1;
     }
-    windowPoints(w) { return f(this.inW[w] / TICKS_PER_WINDOW); }
-    points() { let s = 0; for (let w = 0; w < WINDOWS; w++) s = f(s + this.windowPoints(w)); return s; }
+    windowFill(w) { return f(this.inW[w] / TICKS_PER_WINDOW); }
+    windowPoints(w) { return f(this.windowFill(w) * 2.5); }
+    points() { let s = 0; for (let w = 0; w < WINDOWS; w++) s = f(s + this.windowPoints(w)); return Math.min(10, s); }
     mae() { return this.ticks ? f(this.absErr / this.ticks) : 0; }
   }
 
@@ -4108,7 +4109,8 @@ return Blockly.Msg;
     function compFinish(aborted) { S.comp = 3; S.compAborted = aborted; S.pid = false; S.compLeft = 0; S.holdBall = false; writeServo(0); }
     function sendCompEnd() {
       emit({ e: "comp_end", abort: S.compAborted ? 1 : 0, pts: scorer.points(), mae: scorer.mae(), ticks: scorer.ticks,
-             w: Array.from({ length: 10 }, (_, i) => scorer.windowPoints(i)), sp: S.sp, kp: S.kp, ki: S.ki, kd: S.kd });
+             w: Array.from({ length: 10 }, (_, i) => scorer.windowPoints(i)),
+             wf: Array.from({ length: 10 }, (_, i) => scorer.windowFill(i)), sp: S.sp, kp: S.kp, ki: S.ki, kd: S.kd });
     }
 
     // ---------- interprete ----------
@@ -4185,7 +4187,7 @@ return Blockly.Msg;
         S.compPts = scorer.points(); S.compWin = Math.min(9, Math.floor(scorer.ticks / 120));
         S.compLeft = el >= COMP_RUN_MS ? 0 : COMP_RUN_MS - el;
         if (!compArmed) { if (age <= 100) { compArmed = true; S.pid = true; } else { S.pid = false; compHold = true; } }
-        for (const w of closed) emit({ e: "comp_win", i: w, p: scorer.windowPoints(w) });
+        for (const w of closed) emit({ e: "comp_win", i: w, p: scorer.windowPoints(w), f: scorer.windowFill(w) });
         if (el >= COMP_RUN_MS) { compFinish(false); sendCompEnd(); }
       }
       if (S.pid && age <= HOLD_MS) {                                // palla persa: ultima posizione nota per HOLD_MS
@@ -4730,7 +4732,7 @@ function handleLine(line) {
     else if (o.e === "comp_countdown") { logLine("Competizione: conto alla rovescia", "info"); }
     else if (o.e === "comp_start") { logLine("Competizione: VIA! 60 secondi", "info"); }
     else if (o.e === "tune_start") { logLine("Addestramento PID: VIA!", "info"); }
-    else if (o.e === "comp_win") { compWin[o.i] = +o.p; logLine("Finestra " + (o.i + 1) + "/10: " + (+o.p).toFixed(2) + " punti", "info"); compDraw(); }
+    else if (o.e === "comp_win") { compWin[o.i] = o.f === undefined ? +o.p : +o.f; logLine("Finestra " + (o.i + 1) + "/10: " + (+o.p).toFixed(2) + " punti", "info"); compDraw(); }
     else if (o.e === "comp_end") { compEnd(o); }
     else if (o.e === "log") { logLine("→ " + (+o.v).toFixed(2), "info"); }
     else if (o.e === "done") {
@@ -4995,7 +4997,7 @@ function compDraw() {
   $("compPts").textContent = compPtsLive.toFixed(1);
   $("compMsg").textContent = tuneLaunching ? "Lancio: la trave mantiene l'inclinazione selezionata; il PID parte allo scadere."
     : tuneVia ? "PID attivo." : compState === 1 ? "Metti la palla in fondo alla trave (lato opposto al sensore) e lasciala!"
-    : "Tieni la palla vicino all'obiettivo (±7 cm): ogni 6 secondi vale fino a 1 punto.";
+    : "Tieni la palla vicino all'obiettivo (±6 cm): ogni sbarra vale fino a 2,5 punti, totale massimo 10.";
   boxes($("compWins"), compWin, compState === 2 ? compCur : -1);
 }
 function compTele(o) {
@@ -5015,7 +5017,7 @@ function compEnd(o) {
   $("rPts").textContent = (+o.pts).toFixed(1);
   $("rInfo").innerHTML = (o.abort ? "<b>Competizione interrotta</b> dopo " + Math.round(o.ticks * 0.05) + " s. " : "") +
     "Obiettivo " + (+o.sp).toFixed(1) + " cm · Kp " + (+o.kp) + " · Ki " + (+o.ki) + " · Kd " + (+o.kd) + "<br>Errore medio " + (+o.mae).toFixed(2) + " cm (a parità di punti vince l'errore più basso)";
-  boxes($("rWins"), o.w, -1); $("compRes").hidden = false;
+  boxes($("rWins"), o.wf || o.w, -1); $("compRes").hidden = false;
   logLine("Competizione " + (o.abort ? "interrotta" : "finita") + ": " + (+o.pts).toFixed(2) + " punti", "info");
 }
 async function runComp() {

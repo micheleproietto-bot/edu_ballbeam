@@ -1,8 +1,8 @@
 [
 {"name":"tutto_dentro","runs":[[1200,1,0]]},
 {"name":"tutto_fuori_banda","runs":[[1200,1,7.5]]},
-{"name":"bordo_banda_incluso_7.0","runs":[[1200,1,7]]},
-{"name":"appena_fuori_7.01","runs":[[1200,1,7.01]]},
+{"name":"bordo_banda_incluso_6.0","runs":[[1200,1,6]]},
+{"name":"appena_fuori_6.01","runs":[[1200,1,6.01]]},
 {"name":"palla_non_vista_conta_fuori","runs":[[1200,0,0]]},
 {"name":"finestra_a_meta","runs":[[60,1,0],[60,1,8],[1080,1,0]]},
 {"name":"interrotta_dopo_150_campioni","runs":[[150,1,0]]},

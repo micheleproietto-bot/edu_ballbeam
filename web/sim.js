@@ -44,7 +44,8 @@
     function compFinish(aborted) { S.comp = 3; S.compAborted = aborted; S.pid = false; S.compLeft = 0; S.holdBall = false; writeServo(0); }
     function sendCompEnd() {
       emit({ e: "comp_end", abort: S.compAborted ? 1 : 0, pts: scorer.points(), mae: scorer.mae(), ticks: scorer.ticks,
-             w: Array.from({ length: 10 }, (_, i) => scorer.windowPoints(i)), sp: S.sp, kp: S.kp, ki: S.ki, kd: S.kd });
+             w: Array.from({ length: 10 }, (_, i) => scorer.windowPoints(i)),
+             wf: Array.from({ length: 10 }, (_, i) => scorer.windowFill(i)), sp: S.sp, kp: S.kp, ki: S.ki, kd: S.kd });
     }
 
     // ---------- interprete ----------
@@ -121,7 +122,7 @@
         S.compPts = scorer.points(); S.compWin = Math.min(9, Math.floor(scorer.ticks / 120));
         S.compLeft = el >= COMP_RUN_MS ? 0 : COMP_RUN_MS - el;
         if (!compArmed) { if (age <= 100) { compArmed = true; S.pid = true; } else { S.pid = false; compHold = true; } }
-        for (const w of closed) emit({ e: "comp_win", i: w, p: scorer.windowPoints(w) });
+        for (const w of closed) emit({ e: "comp_win", i: w, p: scorer.windowPoints(w), f: scorer.windowFill(w) });
         if (el >= COMP_RUN_MS) { compFinish(false); sendCompEnd(); }
       }
       if (S.pid && age <= HOLD_MS) {                                // palla persa: ultima posizione nota per HOLD_MS

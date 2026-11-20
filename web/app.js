@@ -389,7 +389,7 @@ function handleLine(line) {
     else if (o.e === "comp_countdown") { logLine("Competizione: conto alla rovescia", "info"); }
     else if (o.e === "comp_start") { logLine("Competizione: VIA! 60 secondi", "info"); }
     else if (o.e === "tune_start") { logLine("Addestramento PID: VIA!", "info"); }
-    else if (o.e === "comp_win") { compWin[o.i] = +o.p; logLine("Finestra " + (o.i + 1) + "/10: " + (+o.p).toFixed(2) + " punti", "info"); compDraw(); }
+    else if (o.e === "comp_win") { compWin[o.i] = o.f === undefined ? +o.p : +o.f; logLine("Finestra " + (o.i + 1) + "/10: " + (+o.p).toFixed(2) + " punti", "info"); compDraw(); }
     else if (o.e === "comp_end") { compEnd(o); }
     else if (o.e === "log") { logLine("→ " + (+o.v).toFixed(2), "info"); }
     else if (o.e === "done") {
@@ -654,7 +654,7 @@ function compDraw() {
   $("compPts").textContent = compPtsLive.toFixed(1);
   $("compMsg").textContent = tuneLaunching ? "Lancio: la trave mantiene l'inclinazione selezionata; il PID parte allo scadere."
     : tuneVia ? "PID attivo." : compState === 1 ? "Metti la palla in fondo alla trave (lato opposto al sensore) e lasciala!"
-    : "Tieni la palla vicino all'obiettivo (±7 cm): ogni 6 secondi vale fino a 1 punto.";
+    : "Tieni la palla vicino all'obiettivo (±6 cm): ogni sbarra vale fino a 2,5 punti, totale massimo 10.";
   boxes($("compWins"), compWin, compState === 2 ? compCur : -1);
 }
 function compTele(o) {
@@ -674,7 +674,7 @@ function compEnd(o) {
   $("rPts").textContent = (+o.pts).toFixed(1);
   $("rInfo").innerHTML = (o.abort ? "<b>Competizione interrotta</b> dopo " + Math.round(o.ticks * 0.05) + " s. " : "") +
     "Obiettivo " + (+o.sp).toFixed(1) + " cm · Kp " + (+o.kp) + " · Ki " + (+o.ki) + " · Kd " + (+o.kd) + "<br>Errore medio " + (+o.mae).toFixed(2) + " cm (a parità di punti vince l'errore più basso)";
-  boxes($("rWins"), o.w, -1); $("compRes").hidden = false;
+  boxes($("rWins"), o.wf || o.w, -1); $("compRes").hidden = false;
   logLine("Competizione " + (o.abort ? "interrotta" : "finita") + ": " + (+o.pts).toFixed(2) + " punti", "info");
 }
 async function runComp() {
