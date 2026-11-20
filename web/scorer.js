@@ -1,10 +1,10 @@
 // Punteggio della competizione — gemello di firmware/lib/scorer/scorer.h (stesse regole, stessi test).
-// 60 s = 10 finestre da 6 s; un campione ogni 50 ms vale "dentro" se la misura è recente e |errore| <= 2 cm.
+// 60 s = 10 finestre da 6 s; un campione ogni 50 ms vale "dentro" se la misura è recente e |errore| <= 7 cm.
 // Ogni finestra vale (campioni dentro / 120) punti; totale 0..10.
 (function (root) {
   "use strict";
   const f = Math.fround;
-  const WINDOWS = 10, TICKS_PER_WINDOW = 120, TOTAL_TICKS = WINDOWS * TICKS_PER_WINDOW, BAND = f(2.0), UNSEEN_ERR = 35;
+  const WINDOWS = 10, TICKS_PER_WINDOW = 120, TOTAL_TICKS = WINDOWS * TICKS_PER_WINDOW, BAND = f(7.0), UNSEEN_ERR = 35;
 
   class Scorer {
     constructor() { this.reset(); }

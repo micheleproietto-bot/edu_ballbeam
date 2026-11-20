@@ -106,6 +106,7 @@
   #compBar .big { font-size:54px; font-weight:800; line-height:1; font-variant-numeric:tabular-nums; min-width:2.2ch; text-align:center; }
   #compBar .lbl { font-size:11.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.09em; font-weight:700; }
   #compBar .col { display:flex; flex-direction:column; gap:2px; }
+  #compBar.pid-launch > .col:nth-child(2), #compBar.pid-launch #compWins { display:none; }
   #compMsg { flex:1; min-width:220px; font-size:17px; font-weight:600; }
   #compWins { display:flex; gap:4px; width:100%; }
   #compWins span { flex:1; height:22px; border-radius:6px; background:var(--hover); border:1px solid var(--line); position:relative; overflow:hidden; }
@@ -210,7 +211,7 @@
         <div class="pidactions">
           <button id="pidRun" class="go" disabled>▶ AVVIA PID</button>
           <button id="pidStop" class="stop" disabled>■ STOP</button>
-          <button id="compGo" class="comp" disabled title="Conto alla rovescia di 5 s, poi 60 s di gara: i valori restano bloccati">🏆 COMPETIZIONE</button>
+          <button id="compGo" class="comp" disabled title="Conto alla rovescia 3, 2, 1, VIA!, poi 60 s di gara: i valori restano bloccati">🏆 COMPETIZIONE</button>
           <label class="launch">inclinazione di lancio <input type="number" id="launchDeg" min="1" max="20" step="1" value="6">°</label>
         </div>
       </div>
@@ -4031,12 +4032,12 @@ return Blockly.Msg;
 })(typeof globalThis !== "undefined" ? globalThis : this);
 </script>
 <script>// Punteggio della competizione — gemello di firmware/lib/scorer/scorer.h (stesse regole, stessi test).
-// 60 s = 10 finestre da 6 s; un campione ogni 50 ms vale "dentro" se la misura è recente e |errore| <= 2 cm.
+// 60 s = 10 finestre da 6 s; un campione ogni 50 ms vale "dentro" se la misura è recente e |errore| <= 7 cm.
 // Ogni finestra vale (campioni dentro / 120) punti; totale 0..10.
 (function (root) {
   "use strict";
   const f = Math.fround;
-  const WINDOWS = 10, TICKS_PER_WINDOW = 120, TOTAL_TICKS = WINDOWS * TICKS_PER_WINDOW, BAND = f(2.0), UNSEEN_ERR = 35;
+  const WINDOWS = 10, TICKS_PER_WINDOW = 120, TOTAL_TICKS = WINDOWS * TICKS_PER_WINDOW, BAND = f(7.0), UNSEEN_ERR = 35;
 
   class Scorer {
     constructor() { this.reset(); }
@@ -4071,7 +4072,7 @@ return Blockly.Msg;
   "use strict";
   const { createInterp, clampf } = root.BBInterp || require("./interp.js");
   const { Scorer } = root.BBScorer || require("./scorer.js");
-  const COMP_COUNTDOWN_MS = 5000, COMP_RUN_MS = 60000, COMP_TICK_MS = 50, COMP_LAUNCH_DEG = -6;   // come nel firmware
+  const COMP_COUNTDOWN_MS = 3000, COMP_RUN_MS = 60000, COMP_TICK_MS = 50, COMP_LAUNCH_DEG = -6;   // come nel firmware
   const HOLD_MS = 3000, HARD_LIMIT = 35, G = 981 /* cm/s^2 */, K_BALL = 5 / 7 /* sfera piena che rotola */;
 
   function createSim(opts) {
@@ -4085,8 +4086,8 @@ return Blockly.Msg;
     // --- stato condiviso (come g_* nel firmware)
     const S = { t: 0, pos: 0, posOk: false, sp: 20, angle: 0, pid: false, kp: 2, ki: 0, kd: 1,
                 ballPresent: true, running: false, tune: false, stopReq: false, lastPing: 0, lastGood: 0, cur: -1,
-                comp: 0, compAborted: false, compPts: 0, compWin: 0, compLeft: 0, holdBall: false };
-    let compLaunch = COMP_LAUNCH_DEG, compT0 = 0, compTick = 0, compArmed = false;
+                tuneLaunchActive: false, tuneLaunchLeft: 0, comp: 0, compAborted: false, compPts: 0, compWin: 0, compLeft: 0, holdBall: false };
+    let tuneLaunch = COMP_LAUNCH_DEG, tuneLaunchT0 = 0, compLaunch = COMP_LAUNCH_DEG, compT0 = 0, compTick = 0, compArmed = false;
     const scorer = new Scorer();
     const compActive = () => S.comp === 1 || S.comp === 2;
     let prog = null, gen = null, wakeAt = 0, progLoaded = false;
@@ -4159,7 +4160,13 @@ return Blockly.Msg;
       if (S.stopReq && !S.running) S.stopReq = false;
       let tuneFail = false;                                         // modalità PID: stesse sicurezze del programma
       if (S.tune && S.t - S.lastPing > 2000) { emit({ e: "err", m: "connessione persa: stop" }); tuneFail = true; }
-      if (tuneFail) { S.tune = false; S.pid = false; }
+      if (tuneFail) { S.tune = false; S.pid = false; S.tuneLaunchActive = false; S.tuneLaunchLeft = 0; }
+      let tuneLaunchHold = false;
+      if (S.tuneLaunchActive && S.tune) {
+        const el = S.t - tuneLaunchT0;
+        if (el >= COMP_COUNTDOWN_MS) { S.tuneLaunchActive = false; S.tuneLaunchLeft = 0; S.pid = true; emit({ e: "tune_start" }); }
+        else { S.tuneLaunchLeft = COMP_COUNTDOWN_MS - el; S.pid = false; tuneLaunchHold = true; }
+      }
       let compHold = false;
       if (compActive() && S.t - S.lastPing > 2000) { emit({ e: "err", m: "connessione persa: stop" }); compFinish(true); sendCompEnd(); }
       if (S.comp === 1) {                                           // conto alla rovescia: trave inclinata verso il sensore, PID spento
@@ -4196,6 +4203,7 @@ return Blockly.Msg;
       if (S.stopReq) { S.pid = false; writeServo(0); }
       if (tuneFail) writeServo(0);
       if (compHold && S.comp !== 3) writeServo(compLaunch);
+      if (tuneLaunchHold && S.tune) writeServo(tuneLaunch);
     }
 
     // ---------- comandi (porting di handleLine) ----------
@@ -4228,7 +4236,7 @@ return Blockly.Msg;
           if (progLoaded) emit({ e: "ok" }); else emit({ e: "err", m: "programma vuoto" });
           break;
         case "tune":                                                 // {"c":"tune","on":1,"sp":..,"kp":..,"ki":..,"kd":..}
-          if (compActive()) return emit({ e: "err", m: "competizione in corso" });   // durante la gara i valori sono bloccati
+          if (compActive() && d.on !== undefined && d.on !== null) return emit({ e: "err", m: "competizione in corso" });
           if (S.running) return emit({ e: "err", m: "ferma il programma prima" });
           if (typeof d.sp === "number") S.sp = clampf(d.sp, 0, 100);
           if (typeof d.kp === "number") S.kp = clampf(d.kp, 0, 50);
@@ -4237,8 +4245,15 @@ return Blockly.Msg;
           if (d.on !== undefined && d.on !== null) {
             if (Number(d.on) !== 0) {
               if (!S.posOk) return emit({ e: "err", m: "sensore non valido" });
-              S.stopReq = false; S.tune = true; S.pid = true;
-            } else { S.tune = false; S.pid = false; writeServo(0); }
+              S.stopReq = false; S.tune = true;
+              if (typeof d.launch === "number") {
+                tuneLaunch = clampf(d.launch, -HARD_LIMIT, 0);
+                tuneLaunchT0 = S.t; S.tuneLaunchLeft = COMP_COUNTDOWN_MS; S.tuneLaunchActive = true; S.pid = false;
+                writeServo(tuneLaunch);
+              } else {
+                S.tuneLaunchActive = false; S.tuneLaunchLeft = 0; S.pid = true;
+              }
+            } else { S.tune = false; S.pid = false; S.tuneLaunchActive = false; S.tuneLaunchLeft = 0; writeServo(0); }
           }
           break;
         case "comp":                                                 // {"c":"comp","on":1,"sp":..,"kp":..,"ki":..,"kd":..,"launch":-6}
@@ -4254,6 +4269,7 @@ return Blockly.Msg;
             if (typeof d.kd === "number") S.kd = clampf(d.kd, 0, 20);
             compLaunch = typeof d.launch === "number" ? clampf(d.launch, -HARD_LIMIT, 0) : COMP_LAUNCH_DEG;   // sempre verso il sensore
             S.tune = false; S.stopReq = false; S.pid = false;
+            S.tuneLaunchActive = false; S.tuneLaunchLeft = 0;
             scorer.reset(); S.compPts = 0; S.compWin = 0; S.compAborted = false; compTick = 0; compArmed = false;
             compT0 = S.t; S.compLeft = COMP_COUNTDOWN_MS; S.comp = 1;
             if (o.autoPlace) { P.x = o.length - 1.5; P.v = 0; S.holdBall = true; }
@@ -4266,13 +4282,13 @@ return Blockly.Msg;
           if (S.running) return emit({ e: "err", m: "già in esecuzione" });
           if (!progLoaded) return emit({ e: "err", m: "nessun programma" });
           if (!S.posOk) return emit({ e: "err", m: "sensore non valido" });
-          S.stopReq = false; S.tune = false; S.running = true; S.lastPing = S.t;
+          S.stopReq = false; S.tune = false; S.tuneLaunchActive = false; S.tuneLaunchLeft = 0; S.running = true; S.lastPing = S.t;
           S.cur = -1; gen = interp.run(prog); wakeAt = S.t;
           break;
         case "stop":
           if (compActive()) { compFinish(true); sendCompEnd(); }
           S.stopReq = true;
-          if (!S.running) { S.tune = false; setManual(0); S.stopReq = false; }
+          if (!S.running) { S.tune = false; S.tuneLaunchActive = false; S.tuneLaunchLeft = 0; setManual(0); S.stopReq = false; }
           break;
         case "angle": if (!S.running && !S.tune && !compActive()) setManual(typeof d.v === "number" ? d.v : 0); break;
         default: emit({ e: "err", m: "comando sconosciuto" });
@@ -4300,6 +4316,7 @@ return Blockly.Msg;
         if (S.t % 50 === 0) {
           const m = { t: S.t, x: +S.pos.toFixed(1), sp: S.sp, a: +S.angle.toFixed(1), run: (S.running || S.tune || compActive()) ? 1 : 0, pid: S.pid ? 1 : 0, ok: S.posOk ? 1 : 0 };
           if (S.running && S.cur >= 0) m.s = S.cur;
+          if (S.tuneLaunchActive) m.tl = S.tuneLaunchLeft;
           if (S.comp) { m.cs = S.comp; m.ct = S.compLeft; m.cp = +S.compPts.toFixed(2); m.cw = S.compWin; }
           emit(m);
         }
@@ -4569,7 +4586,7 @@ const FRIENDLY = {
   "JSON non valido": "La scheda non ha capito il programma: forse ha troppi blocchi uno dentro l'altro. Prova a semplificarlo.",
   "riga troppo lunga": "Il programma è troppo grande per la scheda: usa meno blocchi.",
   "programma troppo annidato": "Ci sono troppi blocchi uno dentro l'altro: semplifica il programma.",
-  "competizione in corso": "C'è una competizione in corso: i valori sono bloccati fino alla fine (o premi INTERROMPI).",
+  "competizione in corso": "C'è una competizione in corso: non puoi avviare altre modalità (puoi regolare i parametri PID).",
   "comando sconosciuto": "La scheda non conosce questo comando: il suo software potrebbe essere vecchio.",
 };
 const friendly = (m) => FRIENDLY[m] || m;
@@ -4603,8 +4620,7 @@ function refreshUi() {
   $("tryAngle").disabled = !connected || running;
   $("compGo").disabled = !connected || running || compOn() || mode !== "pid";
   const lock = compOn(); $("pidRun").disabled = $("pidRun").disabled || lock; $("btnRun").disabled = $("btnRun").disabled || lock;
-  for (const id of ["sSp","sKp","sKi","sKd","oSp","oKp","oKi","oKd","launchDeg","modePid","modeBlk"]) $(id).disabled = lock;
-  for (const b of document.querySelectorAll(".step")) b.disabled = lock;
+  for (const id of ["launchDeg","modePid","modeBlk"]) $(id).disabled = lock;
 }
 async function sendRaw(str) { await link.write(str); }
 function usbLink() {
@@ -4713,6 +4729,7 @@ function handleLine(line) {
     else if (o.e === "err") { logLine("⚠ " + friendly(o.m), "err"); say(friendly(o.m), true); }
     else if (o.e === "comp_countdown") { logLine("Competizione: conto alla rovescia", "info"); }
     else if (o.e === "comp_start") { logLine("Competizione: VIA! 60 secondi", "info"); }
+    else if (o.e === "tune_start") { logLine("Addestramento PID: VIA!", "info"); }
     else if (o.e === "comp_win") { compWin[o.i] = +o.p; logLine("Finestra " + (o.i + 1) + "/10: " + (+o.p).toFixed(2) + " punti", "info"); compDraw(); }
     else if (o.e === "comp_end") { compEnd(o); }
     else if (o.e === "log") { logLine("→ " + (+o.v).toFixed(2), "info"); }
@@ -4947,39 +4964,51 @@ function syncSpRange() { $("sSp").max = Math.max(10, +$("cLen").value || 70); pi
 syncSpRange();
 async function runPid() {
   if (!connected) return;
+  const launch = Math.min(20, Math.max(1, +$("launchDeg").value || 6));
   say(""); hist.length = 0;
   await send(cfgObj()); await new Promise((r) => setTimeout(r, 100));
   pidOn = true; pidDirty = false; pidStartedAt = performance.now();
-  await send({ c:"tune", on:1, ...pidVals() });
-  logLine("PID avviato: obiettivo " + pidVals().sp + " cm", "info");
+  await send({ c:"tune", on:1, ...pidVals(), launch:-launch });
+  logLine("Lancio PID: 3, 2, 1... Obiettivo " + pidVals().sp + " cm", "info");
 }
 function stopPid() {
   if (compOn() && !confirm("Interrompere la competizione? Resteranno solo i punti già fatti.")) return;
   pidOn = false; send({ c:"stop" }); say(""); highlight(null);
 }
 // ---------------- competizione: punteggio e conto alla rovescia calcolati dalla scheda ----------------
-var compState = 0, compWin = [], compCur = 0, compPtsLive = 0, compLeftMs = 0;
+var compState = 0, compWin = [], compCur = 0, compPtsLive = 0, compLeftMs = 0, tuneLaunchLeftMs = 0, tuneLaunchViaUntil = 0;
 function compOn() { return compState === 1 || compState === 2; }
 function boxes(el, vals, cur) {
   if (el.children.length !== 10) { el.innerHTML = ""; for (let i = 0; i < 10; i++) { const s = document.createElement("span"); s.appendChild(document.createElement("i")); el.appendChild(s); } }
   for (let i = 0; i < 10; i++) { const s = el.children[i]; s.firstChild.style.width = (vals[i] === undefined ? 0 : Math.round(vals[i] * 100)) + "%"; s.classList.toggle("cur", i === cur); }
 }
 function compDraw() {
+  const tuneLaunching = tuneLaunchLeftMs > 0;
+  const tuneVia = !tuneLaunching && performance.now() < tuneLaunchViaUntil;
+  const tuneLaunchVisible = tuneLaunching || tuneVia;
   const secs = Math.ceil(compLeftMs / 1000);
-  $("compBar").hidden = !(compState === 1 || compState === 2);
-  $("compPhase").textContent = compState === 1 ? "Si parte tra" : "Tempo rimasto";
-  $("compTime").textContent = compState === 1 ? Math.max(1, secs) : secs;
+  $("compBar").hidden = !(compState === 1 || compState === 2 || tuneLaunchVisible);
+  $("compBar").classList.toggle("pid-launch", tuneLaunchVisible);
+  const starting = compState === 2 && compLeftMs > 59000;
+  $("compPhase").textContent = compState === 1 ? "Si parte tra" : tuneLaunching ? "Lancio PID" : tuneVia ? "Addestramento" : starting ? "VIA!" : "Tempo rimasto";
+  $("compTime").textContent = compState === 1 ? Math.max(1, secs) : tuneLaunching ? Math.max(1, Math.ceil(tuneLaunchLeftMs / 1000)) : tuneVia ? "VIA!" : secs;
   $("compPts").textContent = compPtsLive.toFixed(1);
-  $("compMsg").textContent = compState === 1 ? "Metti la palla in fondo alla trave (lato opposto al sensore) e lasciala!" : "Tieni la palla vicino all'obiettivo (±2 cm): ogni 6 secondi vale fino a 1 punto.";
+  $("compMsg").textContent = tuneLaunching ? "Lancio: la trave mantiene l'inclinazione selezionata; il PID parte allo scadere."
+    : tuneVia ? "PID attivo." : compState === 1 ? "Metti la palla in fondo alla trave (lato opposto al sensore) e lasciala!"
+    : "Tieni la palla vicino all'obiettivo (±7 cm): ogni 6 secondi vale fino a 1 punto.";
   boxes($("compWins"), compWin, compState === 2 ? compCur : -1);
 }
 function compTele(o) {
   const cs = o.cs || 0, was = compState;
   if (cs === 3) { return; }                                // fine gara: ci pensa l'evento comp_end
+  const wasTuneLaunching = tuneLaunchLeftMs > 0;
+  tuneLaunchLeftMs = +o.tl || 0;
+  if (wasTuneLaunching && !tuneLaunchLeftMs && o.run) tuneLaunchViaUntil = performance.now() + 1000;
+  if (!o.run) tuneLaunchViaUntil = 0;
   compState = cs; compLeftMs = +o.ct || 0; compPtsLive = +o.cp || 0; compCur = o.cw | 0;
   if (cs === 1 && was !== 1) { compWin = []; $("compRes").hidden = true; refreshUi(); }
   if (cs === 0 && was !== 0) refreshUi();
-  if (cs) compDraw();
+  compDraw();
 }
 function compEnd(o) {
   compState = 0; compPtsLive = +o.pts; refreshUi(); $("compBar").hidden = true;
@@ -4992,7 +5021,7 @@ function compEnd(o) {
 async function runComp() {
   if (!connected || running || compOn()) return;
   const v = pidVals(), launch = Math.min(20, Math.max(1, +$("launchDeg").value || 6));
-  if (!confirm("Competizione: conto alla rovescia di 5 s (metti la palla in fondo alla trave, lato opposto al sensore), poi 60 s di gara.\nObiettivo " + v.sp + " cm. Una volta partita non potrai più cambiare i valori. Parto?")) return;
+  if (!confirm("Competizione: conto alla rovescia 3, 2, 1, VIA! (metti la palla in fondo alla trave, lato opposto al sensore), poi 60 s di gara.\nObiettivo " + v.sp + " cm. Durante la gara potrai modificare i parametri PID. Parto?")) return;
   say(""); hist.length = 0; pidOn = false; compWin = []; $("compRes").hidden = true;
   await send(cfgObj()); await new Promise((r) => setTimeout(r, 100));
   await send({ c:"comp", on:1, ...v, launch:-launch });
@@ -5000,7 +5029,7 @@ async function runComp() {
 $("compGo").onclick = runComp; $("compAbort").onclick = stopPid; $("rClose").onclick = () => { $("compRes").hidden = true; send({ c:"comp", on:0 }); };
 let pidTick = 0;
 setInterval(() => {                                        // aggiorna i parametri sulla scheda, più lentamente del controllo
-  if (!connected || !pidOn) return;
+  if (!connected || (!pidOn && !compOn())) return;
   if (pidDirty || ++pidTick % 5 === 0) { pidDirty = false; send({ c:"tune", ...pidVals() }); }
 }, 100);
 $("pidRun").onclick = runPid; $("pidStop").onclick = stopPid;

@@ -13,7 +13,7 @@ struct Scorer {
   static const int WINDOWS = 10;
   static const int TICKS_PER_WINDOW = 120;               // 120 campioni da 50 ms = 6 s
   static const int TOTAL_TICKS = WINDOWS * TICKS_PER_WINDOW;
-  static constexpr float BAND = 2.0f;                    // ± cm dall'obiettivo
+  static constexpr float BAND = 7.0f;                    // ± cm dall'obiettivo
   static constexpr float UNSEEN_ERR = 35.0f;             // errore attribuito ai campioni senza misura (solo per l'errore medio)
 
   uint16_t in[WINDOWS];
