@@ -635,8 +635,18 @@ function stopPid() {
   pidOn = false; send({ c:"stop" }); say(""); highlight(null);
 }
 // ---------------- competizione: punteggio e conto alla rovescia calcolati dalla scheda ----------------
-var compState = 0, compWin = [], compCur = 0, compPtsLive = 0, compLeftMs = 0, tuneLaunchLeftMs = 0, tuneLaunchViaUntil = 0;
+var compState = 0, compWin = [], compCur = 0, compPtsLive = 0, compLeftMs = 0, tuneLaunchLeftMs = 0, tuneLaunchViaUntil = 0, compSuccessTimer = 0;
 function compOn() { return compState === 1 || compState === 2; }
+function hideCompSuccess() {
+  if (compSuccessTimer) { clearTimeout(compSuccessTimer); compSuccessTimer = 0; }
+  $("compSuccess").hidden = true;
+}
+function showCompSuccess() {
+  hideCompSuccess();
+  const overlay = $("compSuccess");
+  overlay.hidden = false;
+  compSuccessTimer = setTimeout(() => { overlay.hidden = true; compSuccessTimer = 0; }, 4000);
+}
 function boxes(el, vals, cur) {
   if (el.children.length !== 10) { el.innerHTML = ""; for (let i = 0; i < 10; i++) { const s = document.createElement("span"); s.appendChild(document.createElement("i")); el.appendChild(s); } }
   for (let i = 0; i < 10; i++) { const s = el.children[i]; s.firstChild.style.width = (vals[i] === undefined ? 0 : Math.round(vals[i] * 100)) + "%"; s.classList.toggle("cur", i === cur); }
@@ -675,13 +685,14 @@ function compEnd(o) {
   $("rInfo").innerHTML = (o.abort ? "<b>Competizione interrotta</b> dopo " + Math.round(o.ticks * 0.05) + " s. " : "") +
     "Obiettivo " + (+o.sp).toFixed(1) + " cm · Kp " + (+o.kp) + " · Ki " + (+o.ki) + " · Kd " + (+o.kd) + "<br>Errore medio " + (+o.mae).toFixed(2) + " cm (a parità di punti vince l'errore più basso)";
   boxes($("rWins"), o.wf || o.w, -1); $("compRes").hidden = false;
+  if (o.early) showCompSuccess();
   logLine("Competizione " + (o.abort ? "interrotta" : "finita") + ": " + (+o.pts).toFixed(2) + " punti", "info");
 }
 async function runComp() {
   if (!connected || running || compOn()) return;
   const v = pidVals(), launch = Math.min(20, Math.max(1, +$("launchDeg").value || 6));
   if (!confirm("Competizione: conto alla rovescia 3, 2, 1, VIA! (metti la palla in fondo alla trave, lato opposto al sensore), poi 60 s di gara.\nObiettivo " + v.sp + " cm. Durante la gara potrai modificare i parametri PID. Parto?")) return;
-  say(""); hist.length = 0; pidOn = false; pidDirty = false; compWin = []; $("compRes").hidden = true;
+  hideCompSuccess(); say(""); hist.length = 0; pidOn = false; pidDirty = false; compWin = []; $("compRes").hidden = true;
   await send(cfgObj()); await new Promise((r) => setTimeout(r, 100));
   await send({ c:"comp", on:1, ...v, launch:-launch });
 }

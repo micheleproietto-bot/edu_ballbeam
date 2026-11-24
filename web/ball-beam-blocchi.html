@@ -115,6 +115,10 @@
   #compRes { border-color:#16a34a; }
   #compRes .score { font-size:64px; font-weight:800; line-height:1; } #compRes .score small { font-size:22px; color:var(--muted); font-weight:600; }
   #compRes .row2 { display:flex; gap:20px; align-items:center; flex-wrap:wrap; }
+  #compSuccess { position:fixed; inset:0; z-index:1000; display:grid; place-items:center; padding:24px; color:#f59e0b;
+    font:800 clamp(2rem,5vw,4rem)/1.1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; text-align:center;
+    text-shadow:0 2px 6px rgba(0,0,0,.65),0 0 18px rgba(0,0,0,.25); pointer-events:none; }
+  #compSuccess span { max-width:min(1000px,90vw); }
   .locked { opacity:.55; pointer-events:none; }
   .pidactions { display:flex; gap:10px; margin-top:10px; align-items:center; }
   .pidactions .hint { flex:1; }
@@ -133,6 +137,7 @@
 </style>
 </head>
 <body>
+<div id="compSuccess" role="status" aria-live="polite" hidden><span>Hai stabilizzato il sistema prima del tempo, competizione conclusa!</span></div>
 <header>
   <div class="logo">
     <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true"><g transform="rotate(-8 17 20)"><rect x="2" y="19" width="30" height="4.5" rx="2.2" fill="#e2e8f0"/><circle cx="23" cy="14.5" r="5" fill="#60a5fa"/><circle cx="21.6" cy="13" r="1.6" fill="#dbeafe"/></g><path d="M17 24 L11 32 H23 Z" fill="#c4b5fd"/></svg>
@@ -4106,9 +4111,9 @@ return Blockly.Msg;
       P.cmdDeg = Math.round(clampf(cfg.center + (cfg.inv ? -angle : angle), 0, 180));
     }
     function setManual(angle) { S.pid = false; writeServo(angle); }
-    function compFinish(aborted) { S.comp = 3; S.compAborted = aborted; S.pid = false; S.compLeft = 0; S.holdBall = false; writeServo(0); }
+    function compFinish(aborted, early) { S.comp = 3; S.compAborted = aborted; S.compEarly = !!early; S.pid = false; S.compLeft = 0; S.holdBall = false; writeServo(0); }
     function sendCompEnd() {
-      emit({ e: "comp_end", abort: S.compAborted ? 1 : 0, pts: scorer.points(), mae: scorer.mae(), ticks: scorer.ticks,
+      emit({ e: "comp_end", abort: S.compAborted ? 1 : 0, early: S.compEarly ? 1 : 0, pts: scorer.points(), mae: scorer.mae(), ticks: scorer.ticks,
              w: Array.from({ length: 10 }, (_, i) => scorer.windowPoints(i)),
              wf: Array.from({ length: 10 }, (_, i) => scorer.windowFill(i)), sp: S.sp, kp: S.kp, ki: S.ki, kd: S.kd });
     }
@@ -4188,7 +4193,8 @@ return Blockly.Msg;
         S.compLeft = el >= COMP_RUN_MS ? 0 : COMP_RUN_MS - el;
         if (!compArmed) { if (age <= 100) { compArmed = true; S.pid = true; } else { S.pid = false; compHold = true; } }
         for (const w of closed) emit({ e: "comp_win", i: w, p: scorer.windowPoints(w), f: scorer.windowFill(w) });
-        if (el >= COMP_RUN_MS) { compFinish(false); sendCompEnd(); }
+        if (S.compPts >= 10 && el < COMP_RUN_MS) { compFinish(false, true); sendCompEnd(); }
+        else if (el >= COMP_RUN_MS) { compFinish(false); sendCompEnd(); }
       }
       if (S.pid && age <= HOLD_MS) {                                // palla persa: ultima posizione nota per HOLD_MS
         const err = S.sp - S.pos;
@@ -4272,7 +4278,7 @@ return Blockly.Msg;
             compLaunch = typeof d.launch === "number" ? clampf(d.launch, -HARD_LIMIT, 0) : COMP_LAUNCH_DEG;   // sempre verso il sensore
             S.tune = false; S.stopReq = false; S.pid = false;
             S.tuneLaunchActive = false; S.tuneLaunchLeft = 0;
-            scorer.reset(); S.compPts = 0; S.compWin = 0; S.compAborted = false; compTick = 0; compArmed = false;
+            scorer.reset(); S.compPts = 0; S.compWin = 0; S.compAborted = false; S.compEarly = false; compTick = 0; compArmed = false;
             compT0 = S.t; S.compLeft = COMP_COUNTDOWN_MS; S.comp = 1;
             if (o.autoPlace) { P.x = o.length - 1.5; P.v = 0; S.holdBall = true; }
             writeServo(compLaunch);
@@ -4978,8 +4984,18 @@ function stopPid() {
   pidOn = false; send({ c:"stop" }); say(""); highlight(null);
 }
 // ---------------- competizione: punteggio e conto alla rovescia calcolati dalla scheda ----------------
-var compState = 0, compWin = [], compCur = 0, compPtsLive = 0, compLeftMs = 0, tuneLaunchLeftMs = 0, tuneLaunchViaUntil = 0;
+var compState = 0, compWin = [], compCur = 0, compPtsLive = 0, compLeftMs = 0, tuneLaunchLeftMs = 0, tuneLaunchViaUntil = 0, compSuccessTimer = 0;
 function compOn() { return compState === 1 || compState === 2; }
+function hideCompSuccess() {
+  if (compSuccessTimer) { clearTimeout(compSuccessTimer); compSuccessTimer = 0; }
+  $("compSuccess").hidden = true;
+}
+function showCompSuccess() {
+  hideCompSuccess();
+  const overlay = $("compSuccess");
+  overlay.hidden = false;
+  compSuccessTimer = setTimeout(() => { overlay.hidden = true; compSuccessTimer = 0; }, 4000);
+}
 function boxes(el, vals, cur) {
   if (el.children.length !== 10) { el.innerHTML = ""; for (let i = 0; i < 10; i++) { const s = document.createElement("span"); s.appendChild(document.createElement("i")); el.appendChild(s); } }
   for (let i = 0; i < 10; i++) { const s = el.children[i]; s.firstChild.style.width = (vals[i] === undefined ? 0 : Math.round(vals[i] * 100)) + "%"; s.classList.toggle("cur", i === cur); }
@@ -5018,13 +5034,14 @@ function compEnd(o) {
   $("rInfo").innerHTML = (o.abort ? "<b>Competizione interrotta</b> dopo " + Math.round(o.ticks * 0.05) + " s. " : "") +
     "Obiettivo " + (+o.sp).toFixed(1) + " cm · Kp " + (+o.kp) + " · Ki " + (+o.ki) + " · Kd " + (+o.kd) + "<br>Errore medio " + (+o.mae).toFixed(2) + " cm (a parità di punti vince l'errore più basso)";
   boxes($("rWins"), o.wf || o.w, -1); $("compRes").hidden = false;
+  if (o.early) showCompSuccess();
   logLine("Competizione " + (o.abort ? "interrotta" : "finita") + ": " + (+o.pts).toFixed(2) + " punti", "info");
 }
 async function runComp() {
   if (!connected || running || compOn()) return;
   const v = pidVals(), launch = Math.min(20, Math.max(1, +$("launchDeg").value || 6));
   if (!confirm("Competizione: conto alla rovescia 3, 2, 1, VIA! (metti la palla in fondo alla trave, lato opposto al sensore), poi 60 s di gara.\nObiettivo " + v.sp + " cm. Durante la gara potrai modificare i parametri PID. Parto?")) return;
-  say(""); hist.length = 0; pidOn = false; compWin = []; $("compRes").hidden = true;
+  hideCompSuccess(); say(""); hist.length = 0; pidOn = false; compWin = []; $("compRes").hidden = true;
   await send(cfgObj()); await new Promise((r) => setTimeout(r, 100));
   await send({ c:"comp", on:1, ...v, launch:-launch });
 }

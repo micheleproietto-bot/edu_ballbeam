@@ -192,14 +192,26 @@ const evs = (r, e) => r.lines.filter((l) => l.e === e);
   r.send({ c: "tune", sp: 31, kp: 1.8, ki: 0, kd: 1 });
   r.run(100);
   ok(r.last().cs === 2 && r.last().sp === 31 && evs(r, "err").length === 3, "competizione: obiettivo e PID aggiornabili durante la gara");
+  r.sim.setBallPresent(false);
   r.run(61000);
   const end = evs(r, "comp_end")[0];
   ok(end && end.abort === 0 && end.ticks === 1200 && end.w.length === 10, "competizione: fine gara dopo 60 s con 1200 campioni");
   ok(evs(r, "comp_win").length === 10, "competizione: 10 eventi finestra");
-  ok(end && end.pts >= 5, `competizione: PID stabilizza la palla, punti ${end && end.pts.toFixed(2)} (mae ${end && end.mae.toFixed(2)})`);
+  ok(end && end.pts < 10, `competizione: punteggio sotto il massimo se la palla non è visibile (${end && end.pts.toFixed(2)})`);
   ok(r.last().cs === 3 && r.last().run === 0 && Math.abs(r.last().a) < 1, "competizione: finita, trave livellata");
   r.send({ c: "comp", on: 0 }); r.run(200);
   ok(r.last().cs === undefined, "competizione: chiusura risultati");
+}
+{
+  const r = rig({ length: 70, x0: 35, noise: 0 });
+  r.send({ c: "comp", on: 1, sp: 35, kp: 2, ki: 0, kd: 1, launch: 0 });
+  r.run(3000);
+  r.run(30000);
+  const end = evs(r, "comp_end");
+  ok(end.length === 1 && end[0].abort === 0 && end[0].early === 1 && end[0].pts === 10,
+    "competizione: raggiunti 10 punti, conclusione anticipata con punteggio invariato");
+  ok(end.length === 1 && end[0].ticks < 1200 && r.last().cs === 3 && r.last().ct === 0 && r.last().run === 0 && r.last().a === 0,
+    "competizione: timer fermato e normale procedura di fine gara eseguita prima dei 60 s");
 }
 {
   const r = rig({ length: 70, x0: 35 });

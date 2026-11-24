@@ -63,6 +63,7 @@ static volatile int g_cur = -1;         // indice dell'istruzione in esecuzione 
 // ---------- Competizione ----------
 static volatile int g_comp = 0;                 // 0 spenta, 1 conto alla rovescia, 2 gara, 3 finita
 static volatile bool g_compAborted = false;
+static volatile bool g_compEarly = false;
 static volatile float g_compPts = 0;            // punti (live)
 static volatile int g_compWin = 0;              // finestra in corso (0..9)
 static volatile uint32_t g_compLeft = 0;        // ms rimasti nella fase corrente
@@ -132,13 +133,13 @@ static void setManual(float angle) {
 static void stopAll() { setManual(0); }
 
 // Fine gara (naturale o interrotta). Da chiamare con servoMutex preso.
-static void compFinish(bool aborted) {
-  g_comp = 3; g_compAborted = aborted; g_pid = false; g_compLeft = 0;
+static void compFinish(bool aborted, bool early = false) {
+  g_comp = 3; g_compAborted = aborted; g_compEarly = early; g_pid = false; g_compLeft = 0;
   writeServo(0);
 }
 static void sendCompEnd() {
   JsonDocument d;
-  d["e"] = "comp_end"; d["abort"] = g_compAborted ? 1 : 0;
+  d["e"] = "comp_end"; d["abort"] = g_compAborted ? 1 : 0; d["early"] = g_compEarly ? 1 : 0;
   d["pts"] = scorer.points(); d["mae"] = scorer.mae(); d["ticks"] = scorer.ticks;
   JsonArray w = d["w"].to<JsonArray>();
   JsonArray wf = d["wf"].to<JsonArray>();
@@ -260,7 +261,8 @@ static void controlTask(void*) {
       if (!compArmed) {                                  // finché il sensore non vede la palla resta l'inclinazione di lancio
         if (age <= 100) { compArmed = true; g_pid = true; } else { g_pid = false; compHold = true; }
       }
-      if (el >= COMP_RUN_MS) { compFinish(false); evEnd = true; }
+      if (g_compPts >= bb::Scorer::MAX_POINTS && el < COMP_RUN_MS) { compFinish(false, true); evEnd = true; }
+      else if (el >= COMP_RUN_MS) { compFinish(false); evEnd = true; }
     }
     if (g_pid && age <= HOLD_MS) {
       float pos = g_pos;                                // se la palla è persa: ultima posizione nota
@@ -383,7 +385,7 @@ static void handleLine(const char* line) {
       g_compLaunch = d["launch"].is<float>() ? clampf(d["launch"], -HARD_LIMIT, 0) : COMP_LAUNCH_DEG;   // sempre verso il sensore
       g_tune = false; g_stopReq = false; g_pid = false;
       g_tuneLaunchActive = false; g_tuneLaunchLeft = 0;
-      scorer.reset(); g_compPts = 0; g_compWin = 0; g_compAborted = false; compTick = 0; compArmed = false;
+      scorer.reset(); g_compPts = 0; g_compWin = 0; g_compAborted = false; g_compEarly = false; compTick = 0; compArmed = false;
       compT0 = millis(); g_compLeft = COMP_COUNTDOWN_MS; g_comp = 1;
       writeServo(g_compLaunch);
       xSemaphoreGive(servoMutex);

@@ -41,9 +41,9 @@
       P.cmdDeg = Math.round(clampf(cfg.center + (cfg.inv ? -angle : angle), 0, 180));
     }
     function setManual(angle) { S.pid = false; writeServo(angle); }
-    function compFinish(aborted) { S.comp = 3; S.compAborted = aborted; S.pid = false; S.compLeft = 0; S.holdBall = false; writeServo(0); }
+    function compFinish(aborted, early) { S.comp = 3; S.compAborted = aborted; S.compEarly = !!early; S.pid = false; S.compLeft = 0; S.holdBall = false; writeServo(0); }
     function sendCompEnd() {
-      emit({ e: "comp_end", abort: S.compAborted ? 1 : 0, pts: scorer.points(), mae: scorer.mae(), ticks: scorer.ticks,
+      emit({ e: "comp_end", abort: S.compAborted ? 1 : 0, early: S.compEarly ? 1 : 0, pts: scorer.points(), mae: scorer.mae(), ticks: scorer.ticks,
              w: Array.from({ length: 10 }, (_, i) => scorer.windowPoints(i)),
              wf: Array.from({ length: 10 }, (_, i) => scorer.windowFill(i)), sp: S.sp, kp: S.kp, ki: S.ki, kd: S.kd });
     }
@@ -123,7 +123,8 @@
         S.compLeft = el >= COMP_RUN_MS ? 0 : COMP_RUN_MS - el;
         if (!compArmed) { if (age <= 100) { compArmed = true; S.pid = true; } else { S.pid = false; compHold = true; } }
         for (const w of closed) emit({ e: "comp_win", i: w, p: scorer.windowPoints(w), f: scorer.windowFill(w) });
-        if (el >= COMP_RUN_MS) { compFinish(false); sendCompEnd(); }
+        if (S.compPts >= 10 && el < COMP_RUN_MS) { compFinish(false, true); sendCompEnd(); }
+        else if (el >= COMP_RUN_MS) { compFinish(false); sendCompEnd(); }
       }
       if (S.pid && age <= HOLD_MS) {                                // palla persa: ultima posizione nota per HOLD_MS
         const err = S.sp - S.pos;
@@ -207,7 +208,7 @@
             compLaunch = typeof d.launch === "number" ? clampf(d.launch, -HARD_LIMIT, 0) : COMP_LAUNCH_DEG;   // sempre verso il sensore
             S.tune = false; S.stopReq = false; S.pid = false;
             S.tuneLaunchActive = false; S.tuneLaunchLeft = 0;
-            scorer.reset(); S.compPts = 0; S.compWin = 0; S.compAborted = false; compTick = 0; compArmed = false;
+            scorer.reset(); S.compPts = 0; S.compWin = 0; S.compAborted = false; S.compEarly = false; compTick = 0; compArmed = false;
             compT0 = S.t; S.compLeft = COMP_COUNTDOWN_MS; S.comp = 1;
             if (o.autoPlace) { P.x = o.length - 1.5; P.v = 0; S.holdBall = true; }
             writeServo(compLaunch);
